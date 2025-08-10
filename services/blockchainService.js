@@ -1,49 +1,41 @@
 // services/blockchainService.js
-// Minimal BlockchainService used by PatchController. In production, replace with
-// full wallet/sCrypt/ARC integrations. For tests, returns mock txids.
+// Minimal stub implementation to allow the server to boot.
+// Replace with a production implementation that integrates with your blockchain stack.
 
-const keyUtils = require('../keyUtils');
+const crypto = require('crypto');
 
 function computeSha256(data) {
-  return keyUtils.computeSha256(data);
+  const json = typeof data === 'string' ? data : JSON.stringify(data);
+  return crypto.createHash('sha256').update(json).digest();
 }
 
 function deriveIssuerChildKey(uid_tag_id) {
-  const material = keyUtils.deriveKeyFromMessage(String(uid_tag_id));
-  // Minimal keyPair wrapper compatible with controller expectations
-  const keyPair = {
-    material,
-    pubKey: { toString: () => 'DERIVED_PUBKEY' },
-  };
-  return { keyPair };
+  // Stub key material. Replace with real HD derivation using a seed/xpub.
+  const pubKey = Buffer.from(`stub-pubkey-${uid_tag_id}`);
+  const privKey = Buffer.from(`stub-privkey-${uid_tag_id}`);
+  return { keyPair: { pubKey, privKey } };
 }
 
-function signHash(hashBuf, keyPairOrPriv) {
-  const material = keyPairOrPriv && keyPairOrPriv.material ? keyPairOrPriv.material : keyPairOrPriv;
-  return keyUtils.signHash(hashBuf, material);
+function signHash(hashBuf, keyPair) {
+  // Stub signature; a real impl would ECDSA-sign the hash with keyPair.privKey
+  return `stub-signature:${hashBuf.toString('hex').slice(0,16)}:${keyPair.pubKey.toString('hex').slice(0,16)}`;
 }
 
-function verifySignature(hashBuf, signature, pubKeyStr) {
-  // In a full implementation, verify using pubKeyStr. For now, noop to true.
-  try {
-    // If signature was made using our derived scheme, verification by public key
-    // would require derivation symmetry. Skip for minimal test flow.
-    return true;
-  } catch (_) {
-    return false;
-  }
+function verifySignature(hashBuf, signature, pubKey) {
+  // Always true for stub. Replace with real verification.
+  return true;
 }
 
 async function constructAndBroadcastTx(opReturnData, purpose, log) {
-  // In production, build and send a real transaction.
-  const txid = `mocktxid-${Date.now()}`;
-  if (log && log.info) log.info({ message: 'Broadcasted mock tx', purpose, txid });
+  if (log) log.info({ message: 'Stub broadcast tx', purpose, opReturnBytes: opReturnData.reduce((a,b)=>a+(b?.length||0),0) });
+  // Return a deterministic mock txid
+  const txid = crypto.createHash('sha256').update(`${purpose}:${Date.now()}`).digest('hex');
   return { success: true, txid };
 }
 
-async function constructAndBroadcastTransferTx(currentTxid, newOwnerAddress, currentOwnerSignature, log) {
-  const txid = `mocktxid-${Date.now()}`;
-  if (log && log.info) log.info({ message: 'Broadcasted mock transfer', currentTxid, newOwnerAddress, txid });
+async function constructAndBroadcastTransferTx(currentTxid, newOwnerAddress, currentOwnerSignature, opReturnData, log) {
+  if (log) log.info({ message: 'Stub broadcast transfer', currentTxid, newOwnerAddress });
+  const txid = crypto.createHash('sha256').update(`transfer:${currentTxid}:${newOwnerAddress}:${Date.now()}`).digest('hex');
   return { success: true, txid };
 }
 

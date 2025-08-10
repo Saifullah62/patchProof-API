@@ -3,23 +3,19 @@ const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 const mongoose = require('mongoose');
 
 const logger = require('./logger');
 const { getSecret } = require('./secrets');
-const { initDb, closeDb } = require('./config/db'); // Mongoose lifecycle
+const { initDb, closeDb } = require('./config/db');
 
 // Controllers
 const patchController = require('./controllers/patchController');
 const authController = require('./controllers/authController');
 
-// Optional correlation middleware if present
-let correlationMiddleware;
-try {
-  correlationMiddleware = require('./requestId');
-} catch (e) {
-  correlationMiddleware = (req, res, next) => next();
-}
+// Middleware
+const requestIdMiddleware = require('./requestId');
 
 async function startServer() {
   try {
@@ -27,12 +23,20 @@ async function startServer() {
 
     const app = express();
 
-    // Middleware
+    // --- Security and Core Middleware ---
+    app.set('trust proxy', 1); // Trust first proxy if behind a reverse proxy/CDN
     app.use(helmet());
 
+    const limiter = rateLimit({
+        windowMs: 15 * 60 * 1000, // 15 minutes
+        max: process.env.NODE_ENV === 'test' ? 1000 : 100, // 100 requests per IP per 15 min
+        standardHeaders: true,
+        legacyHeaders: false,
+    });
+    app.use(limiter);
+
     const allowedOrigins = (getSecret('CORS_ALLOWED_ORIGINS') || '').split(',').filter(Boolean);
-    app.use(
-      cors({
+    app.use(cors({
         origin: (origin, callback) => {
           if (!origin || process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin)) {
             return callback(null, true);
@@ -40,32 +44,29 @@ async function startServer() {
           logger.warn(`CORS blocked request from origin: ${origin}`);
           return callback(new Error('Not allowed by CORS'));
         },
-      })
-    );
+    }));
 
     app.use(express.json({ limit: '1mb' }));
-    if (correlationMiddleware) app.use(correlationMiddleware);
+    app.use(requestIdMiddleware);
     app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
 
-    // Routes (v1 only)
-    // Auth
-    app.post('/v1/auth/request-verification', (req, res, next) => authController.requestVerification(req, res, next));
-    app.post('/v1/auth/submit-verification', (req, res, next) => authController.submitVerification(req, res, next));
-
-    // Patches
-    app.post('/v1/patches', (req, res, next) => patchController.registerPatch(req, res, next));
-    app.get('/v1/patches/verify/:uid_tag_id', (req, res, next) => patchController.verifyPatch(req, res, next));
-    app.post('/v1/patches/:txid/transfer-ownership', (req, res, next) => patchController.transferOwnership(req, res, next));
-    app.post('/v1/patches/:uid_tag_id/unlock-content', (req, res, next) => patchController.unlockContent(req, res, next));
-
-    // Health and Readiness Probe
-    app.get('/health', (req, res) => {
-      const isDbConnected = mongoose.connection.readyState === 1;
-      if (isDbConnected) {
-        res.json({ status: 'ok', database: 'connected' });
-      } else {
-        res.status(503).json({ status: 'error', database: 'disconnected' });
-      }
+    // --- Routes (V1 Only) ---
+    app.post('/v1/auth/request-verification', authController.requestVerification);
+    app.post('/v1/auth/submit-verification', authController.submitVerification);
+    app.post('/v1/patches', patchController.registerPatch);
+    app.get('/v1/patches/verify/:uid_tag_id', patchController.verifyPatch);
+    app.post('/v1/patches/:txid/transfer-ownership', patchController.transferOwnership);
+    app.post('/v1/patches/:uid_tag_id/unlock-content', patchController.unlockContent);
+    
+    // --- Operational Endpoints ---
+    app.get('/health', (req, res) => res.json({ status: 'ok' }));
+    app.get('/ready', (req, res) => {
+        const isDbConnected = mongoose.connection.readyState === 1;
+        if (isDbConnected) {
+            res.json({ status: 'ready', database: 'connected' });
+        } else {
+            res.status(503).json({ status: 'not_ready', database: 'disconnected' });
+        }
     });
 
     // 404 handler

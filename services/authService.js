@@ -1,12 +1,16 @@
 // services/authService.js
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const jwt = require('jsonwebtoken'); // <-- USE THE STANDARD LIBRARY
 const VerificationCode = require('../models/VerificationCode');
-const { signJWT } = require('../jwt');
 const logger = require('../logger');
 const { getSecret } = require('../secrets');
 
 const MAX_VERIFICATION_ATTEMPTS = 5;
+const JWT_SECRET = getSecret('JWT_SECRET');
+if (!JWT_SECRET) {
+  throw new Error('FATAL ERROR: JWT_SECRET is not defined in environment variables.');
+}
 
 class AuthService {
   constructor() {
@@ -89,7 +93,8 @@ class AuthService {
 
     if (record.code === providedCode) {
       await record.deleteOne();
-      const token = signJWT({ identifier, method: 'identifier' }, 24 * 60 * 60); // 24h
+      // --- MODIFIED LINE ---
+      const token = jwt.sign({ identifier, method: 'identifier' }, JWT_SECRET, { expiresIn: '24h' });
       return { success: true, token };
     } else {
       record.attempts += 1;
