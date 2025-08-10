@@ -33,7 +33,7 @@ function deriveIssuerChildKey(uid_tag_id) {
     }
   }
   // Deterministic fallback (not as secure as HD): derive private key from HMAC(uid)
-  const seed = getSecret('ISSUER_SEED') || 'patchproof-default-seed';
+  const seed = getSecret('ISSUER_SEED') || getSecret('MASTER_SECRET') || 'patchproof-default-seed';
   let d = bsv.crypto.Hash.sha256hmac(Buffer.from(seed), Buffer.from(uid_tag_id));
   // Ensure d within curve range; if zero, tweak
   while (d.equals(Buffer.alloc(32))) {
