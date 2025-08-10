@@ -1,0 +1,173 @@
+openapi: 3.0.3
+info:
+  title: PatchProof API
+  version: 1.0.0
+  description: API for PatchProof authentication and patch management
+servers:
+  - url: http://localhost:3001
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /ready:
+    get:
+      summary: Readiness check
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  database:
+                    type: string
+        '503':
+          description: Not ready
+  /v1/auth/request-verification:
+    post:
+      summary: Request verification code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                identifier:
+                  type: string
+              required:
+                - identifier
+      responses:
+        '200':
+          description: Verification initiated
+  /v1/auth/submit-verification:
+    post:
+      summary: Submit verification code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                identifier:
+                  type: string
+                code:
+                  type: string
+              required:
+                - identifier
+                - code
+      responses:
+        '200':
+          description: Verified
+  /v1/patches:
+    post:
+      summary: Register a patch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                uid_tag_id:
+                  type: string
+                batch_id:
+                  type: string
+                manufacturer_public_key:
+                  type: string
+                serial_number:
+                  type: string
+                product_model:
+                  type: string
+                issue_date:
+                  type: string
+                expiry_date:
+                  type: string
+                signature:
+                  type: string
+              required:
+                - uid_tag_id
+                - manufacturer_public_key
+                - serial_number
+                - product_model
+                - issue_date
+                - expiry_date
+                - signature
+      responses:
+        '200':
+          description: Registered
+  /v1/patches/verify/{uid_tag_id}:
+    get:
+      summary: Verify a patch
+      parameters:
+        - in: path
+          name: uid_tag_id
+          schema:
+            type: string
+          required: true
+      responses:
+        '200':
+          description: Verification result
+  /v1/patches/{txid}/transfer-ownership:
+    post:
+      summary: Transfer patch ownership
+      parameters:
+        - in: path
+          name: txid
+          schema:
+            type: string
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                new_owner_address:
+                  type: string
+                current_owner_signature:
+                  type: string
+              required:
+                - new_owner_address
+                - current_owner_signature
+      responses:
+        '200':
+          description: Ownership transferred
+  /v1/patches/{uid_tag_id}/unlock-content:
+    post:
+      summary: Unlock content for a patch
+      parameters:
+        - in: path
+          name: uid_tag_id
+          schema:
+            type: string
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token:
+                  type: string
+              required:
+                - token
+      responses:
+        '200':
+          description: Content unlocked
