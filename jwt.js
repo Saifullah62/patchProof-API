@@ -5,7 +5,10 @@
 const crypto = require('crypto');
 const { getSecret } = require('./secrets');
 
-const JWT_SECRET = getSecret('JWT_SECRET') || 'demo-jwt-secret';
+const JWT_SECRET = getSecret('JWT_SECRET');
+if (!JWT_SECRET) {
+  throw new Error('FATAL ERROR: JWT_SECRET is not defined in environment variables.');
+}
 const JWT_ALG = 'HS256';
 
 function base64url(input) {

@@ -7,7 +7,10 @@ const bsv = require('bsv');
 
 // Load secret from secure store
 const { getSecret } = require('./secrets');
-const MASTER_SECRET = getSecret('MASTER_SECRET') || 'demo-master-secret';
+const MASTER_SECRET = getSecret('MASTER_SECRET');
+if (!MASTER_SECRET) {
+  throw new Error('FATAL ERROR: MASTER_SECRET is not defined in environment variables.');
+}
 
 /**
  * Create a deterministic, structured message for traceable key derivation
@@ -33,7 +36,18 @@ function deriveKeyFromMessage(message, depth = 0) {
   }
   const seed = crypto.createHmac('sha256', Buffer.from(MASTER_SECRET)).update(hash).digest();
   const bip32 = new bsv.Bip32().fromSeed(seed);
-  return new bsv.KeyPair().fromPrivKey(bip32.privKey);
+  const kp = new bsv.KeyPair().fromPrivKey(bip32.privKey);
+  // Back-compat helper for tests expecting toWIF()
+  if (typeof kp.toWIF !== 'function') {
+    kp.toWIF = function () {
+      const pk = this.privKey;
+      if (!pk) return undefined;
+      if (typeof pk.toWif === 'function') return pk.toWif();
+      if (typeof pk.toWIF === 'function') return pk.toWIF();
+      return undefined;
+    };
+  }
+  return kp;
 }
 
 /**
@@ -160,7 +174,10 @@ function verifyMerkleProof(leaf, path, root) {
  * @returns {string} - base64 signature
  */
 function signHash(hash, keyPair) {
-  return bsv.Ecdsa.sign(hash, keyPair).toString();
+  const buf = Buffer.isBuffer(hash) ? hash : Buffer.from(hash);
+  const h32 = buf.length === 32 ? buf : crypto.createHash('sha256').update(buf).digest();
+  const priv = keyPair && (keyPair.privKey || keyPair);
+  return bsv.Ecdsa.sign(h32, priv).toString();
 }
 
 /**
@@ -172,9 +189,11 @@ function signHash(hash, keyPair) {
  */
 function verifyHashSignature(hash, signature, pubKeyStr) {
   try {
+    const buf = Buffer.isBuffer(hash) ? hash : Buffer.from(hash);
+    const h32 = buf.length === 32 ? buf : crypto.createHash('sha256').update(buf).digest();
     const sig = bsv.Sig.fromString(signature);
     const pubKey = bsv.PubKey.fromString(pubKeyStr);
-    return bsv.Ecdsa.verify(hash, sig, pubKey);
+    return bsv.Ecdsa.verify(h32, sig, pubKey);
   } catch (err) {
     return false;
   }

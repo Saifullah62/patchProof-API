@@ -9,6 +9,7 @@ const secretsCache = {};
 // Map of logical secret names to env var names
 const SECRET_ENV_MAP = {
   'MASTER_SECRET': 'MASTER_SECRET',
+  'JWT_SECRET': 'JWT_SECRET',
   'API_KEY': 'API_KEY',
   'MERCHANT_API_URL': 'MERCHANT_API_URL',
   'UTXO_TXID': 'UTXO_TXID',

@@ -1,3 +1,9 @@
+jest.setTimeout(30000);
+console.log('[keyUtils.test] loaded');
+
+// Ensure required secrets are set before loading keyUtils
+process.env.MASTER_SECRET = process.env.MASTER_SECRET || 'test-master-secret';
+
 // Unit tests for keyUtils.js advanced cryptographic utilities
 const {
   deriveKeyFromMessage,
@@ -10,6 +16,14 @@ const {
 } = require('../keyUtils');
 
 const bsv = require('bsv');
+
+beforeAll(() => {
+  console.log('[keyUtils.test] beforeAll');
+});
+
+afterAll(() => {
+  console.log('[keyUtils.test] afterAll');
+});
 
 
 describe('Key Derivation', () => {

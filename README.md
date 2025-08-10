@@ -5,63 +5,37 @@ This API provides secure authentication, chain of custody, and on-chain anchorin
 
 ---
 
-## Deployment Requirements
-
-### Database Migrations (Production)
-For production, use formal database migrations to manage schema changes safely and predictably. This project uses [Knex](https://knexjs.org/) migrations:
-
-- Migration config: `knexfile.js`
-- Migration scripts: `/migrations`
-- To create the database schema, run:
-  ```sh
-  npx knex migrate:latest
-  ```
-- To create a new migration:
-  ```sh
-  npx knex migrate:make migration_name
-  ```
-- To rollback:
-  ```sh
-  npx knex migrate:rollback
-  ```
-
-**Why?**
-- Migrations provide version control for your schema, enable safe upgrades/downgrades, and are required for multi-instance or cloud deployments.
-- The API no longer creates tables automatically in production; run migrations as a deployment step.
+## 🚀 Deployment Requirements
 
 ### 1. Environment Variables
 
+For production, you must set the following environment variables. Do not hardcode these values.
+
 #### Database
-- `DB_TYPE` – `sqlite` (default), `postgres`, or `mysql` (Postgres/MySQL are stubs)
+- `MONGODB_URI` – Required. The full connection string for your MongoDB Atlas cluster.
+- `DB_NAME` – The name of the database to use within your cluster (e.g., `appdb`).
 
 #### Secrets Management
-- All secrets are accessed via `secrets.js` abstraction. For local/dev, use environment variables. For production, use a secrets manager or HSM.
-- Required secrets:
-  - `MASTER_SECRET` – Master secret for deterministic key derivation
-  - `API_KEY` – API key for admin/protected endpoints
-  - `JWT_SECRET` – JWT signing secret
+- `MASTER_SECRET` – Required. A strong, unique secret for deterministic key derivation.
+- `API_KEY` – Required. The API key for accessing protected endpoints.
+- `JWT_SECRET` – Required. The secret used for signing JSON Web Tokens.
 
 #### On-Chain Anchoring (Funding Modes)
+Choose one of the two modes below for on-chain anchoring.
 
-**A. Static/Manual Mode (Single UTXO, for dev/test):**
-- `MERCHANT_API_URL` – Merchant API endpoint for BSV broadcast
-- `UTXO_TXID` – Funding UTXO transaction ID
-- `UTXO_OUTPUT_INDEX` – UTXO output index (integer)
-- `UTXO_SATOSHIS` – UTXO value in satoshis
-- `UTXO_SCRIPT_HEX` – UTXO locking script in hex
-- `UTXO_PRIVKEY_WIF` – Private key (WIF) for signing
-- `UTXO_CHANGE_ADDRESS` – Address for change output (optional)
-
-**B. Dynamic SmartLedger Wallet Mode (Recommended for Production):**
+**A. Dynamic SmartLedger Wallet Mode (Recommended for Production):**
 - `SMARTLEDGER_API_BASE_URL` – e.g. `https://smartledger.dev`
-- `SMARTLEDGER_API_KEY` – Your SmartLedger API key
-- `FUNDING_ADDRESS` – BSV address to fund anchoring transactions
-- `FUNDING_WIF` – Corresponding private key (WIF) for signing
+- `SMARTLEDGER_API_KEY` – Your SmartLedger API key.
+- `FUNDING_ADDRESS` – BSV address to fund anchoring transactions.
+- `FUNDING_WIF` – Corresponding private key (WIF) for signing.
 
-If all SmartLedger variables are set, dynamic wallet mode is used. Otherwise, static/manual mode is used as fallback.
+**B. Static/Manual Mode (Single UTXO, for dev/test):**
+- `MERCHANT_API_URL` – Merchant API endpoint for BSV broadcast.
+- `UTXO_TXID`, `UTXO_OUTPUT_INDEX`, `UTXO_SATOSHIS`, `UTXO_SCRIPT_HEX`, `UTXO_PRIVKEY_WIF`, `UTXO_CHANGE_ADDRESS`
 
 #### Other
-- `PORT` – Port to run the API (default: 3000)
+- `PORT` – Port to run the API (default: 3000).
+- `NODE_ENV` - Set to `production` for live environments.
 
 ---
 
@@ -81,8 +55,8 @@ If all SmartLedger variables are set, dynamic wallet mode is used. Otherwise, st
 By default, CORS is permissive for dev. For production, restrict origins:
 ```js
 const allowedOrigins = [
-  'https://yourdomain.com',
-  'https://admin.yourdomain.com'
+  'https://proofpatch.com',
+  'https://www.proofpatch.com'
 ];
 app.use(cors({
   origin: (origin, cb) => {
@@ -111,7 +85,7 @@ app.use(rateLimit({
 This project includes a ready-to-use GitHub Actions workflow for continuous integration and deployment:
 
 - **Lint & Test:** Runs `npm install` and `npm test` (Jest + Supertest integration tests) on every push and pull request.
-- **Database Migrations:** Runs `npx knex migrate:latest` to ensure schema is up to date before tests.
+- **MongoDB Readiness:** Ensures Mongoose connects before starting the app/tests; tests will auto-use mongodb-memory-server when MONGODB_URI is not set.
 - **Example Workflow:** See `.github/workflows/ci.yml` for configuration (auto-created if missing).
 
 **To enable:**
@@ -121,22 +95,15 @@ This project includes a ready-to-use GitHub Actions workflow for continuous inte
 
 ---
 
-## 🗄️ Database Migrations
+## 🗄️ Database Schema (MongoDB + Mongoose)
 
-- Uses [Knex](http://knexjs.org/) for formal schema management.
-- **Run migrations locally:**
-  ```sh
-  npx knex migrate:latest
-  ```
-- **Create a new migration:**
-  ```sh
-  npx knex migrate:make migration_name
-  ```
-- **Rollback:**
-  ```sh
-  npx knex migrate:rollback
-  ```
-- See `knexfile.js` for SQLite/Postgres/MySQL config. Default is SQLite (file-based, easy for dev).
+- This project uses MongoDB with Mongoose models. No SQL/Knex migrations are required.
+- Models:
+  - `models/AuthenticationRecord.js` — immutable on-chain record data and indexing metadata.
+  - `models/PatchState.js` — current ownership/transfer state.
+  - `models/VerificationCode.js` — short‑lived codes with TTL index.
+- Connection lifecycle is managed in `config/db.js` (initDb/closeDb). The server starts only after Mongoose connects.
+- Tests use `mongodb-memory-server` automatically when `MONGODB_URI` is not provided.
 
 ---
 
@@ -148,7 +115,7 @@ This project includes a ready-to-use GitHub Actions workflow for continuous inte
 - See `.env.example` and README Environment section for all options.
 - Start server:
   ```sh
-  node auth_api_production.js
+  node app.js
   ```
 
 ---
@@ -247,6 +214,31 @@ See [`tests/keyUtils.test.js`](./tests/keyUtils.test.js) for full test coverage 
 ## 💸 Funding Abstraction & Extensibility
 - The broadcast logic is fully abstracted: rotate funding keys, support multiple sources, or plug in a wallet service/API with minimal code changes.
 - SmartLedger wallet integration is recommended for production.
+
+---
+
+## 🚀 Deployment Checklist
+
+This is a high-level checklist for deploying the API to a production environment.
+
+- [ ] Secrets Management: All secrets (e.g., `MONGODB_URI`, `JWT_SECRET`, `MASTER_SECRET`, `API_KEY`) must be in a secure secrets manager. The app should have read-only access.
+- [ ] CORS Configuration: Set `CORS_ALLOWED_ORIGINS` to a comma-separated list (e.g., `https://proofpatch.com,https://www.proofpatch.com`).
+- [ ] Database Indexes: Verify indexes exist for `authenticationrecords`, `patchstates`, and `verificationcodes`. Mongoose will attempt to create these; confirm in production.
+- [ ] Rate Limiting: Enable and configure a production-appropriate rate limiter, optionally with a shared store (e.g., Redis) for multi-instance deployments.
+- [ ] Logging: Configure Winston transports to forward logs to your centralized provider (Datadog/CloudWatch/ELK).
+- [ ] On-Chain Funding: For static mode, ensure the funding UTXO has a small, monitored balance. For SmartLedger mode, secure the wallet/API keys.
+
+---
+
+## 🛡️ Security Notes
+
+The API includes multiple security best practices:
+
+- Secure Headers: `helmet` sets key HTTP headers to mitigate common web vulnerabilities.
+- Input Validation: V1 endpoints validate request bodies/params with Joi.
+- Authentication: Sensitive endpoints are protected by JWT.
+- Rate Limiting: Default limiter is included; tune thresholds for your traffic.
+- Deterministic Cryptography: Keys are derived on-demand from a master secret and never stored at rest.
 
 ---
 
