@@ -13,6 +13,7 @@ const { initDb, closeDb } = require('./config/db');
 // Controllers
 const patchController = require('./controllers/patchController');
 const authController = require('./controllers/authController');
+const setupSwagger = require('./swagger');
 
 // Middleware
 const requestIdMiddleware = require('./requestId');
@@ -57,6 +58,9 @@ async function startServer() {
     app.get('/v1/patches/verify/:uid_tag_id', patchController.verifyPatch);
     app.post('/v1/patches/:txid/transfer-ownership', patchController.transferOwnership);
     app.post('/v1/patches/:uid_tag_id/unlock-content', patchController.unlockContent);
+    
+    // --- API Docs ---
+    setupSwagger(app);
     
     // --- Operational Endpoints ---
     app.get('/health', (req, res) => res.json({ status: 'ok' }));
