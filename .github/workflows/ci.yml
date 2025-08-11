@@ -1,34 +1,58 @@
-name: CI
+# .github/workflows/ci.yml
 
+name: Continuous Integration
+
+# Controls when the workflow will run
 on:
+  # Triggers the workflow on push or pull request events for the "main" branch
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
-    branches: [ main ]
+    branches: [ "main" ]
+  
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
+  # A single job called "test"
   test:
+    # The type of runner that the job will run on
     runs-on: ubuntu-latest
+
     steps:
+      # 1. Checks-out your repository so the job can access it
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Sets up a Node.js environment
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '18.x' # Specify your Node.js version
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci || npm install
+      # 3. Installs all project dependencies securely and quickly
+      - name: Install Dependencies
+        run: npm ci
 
-      - name: Create test env file
-        run: |
-          cp .env.example .env || true
-          echo "NODE_ENV=test" >> .env
-          echo "WOC_NETWORK=test" >> .env
-      
-      - name: Run tests
+      # 4. Runs the test suite using the secrets you configured
+      - name: Run Tests
+        run: npm test
         env:
+          # This is the crucial step that maps your GitHub Secrets 
+          # to the environment variables your application needs.
           NODE_ENV: test
-        run: npm test --silent
+          API_KEY: ${{ secrets.API_KEY }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          MASTER_SECRET: ${{ secrets.MASTER_SECRET }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          CORS_ALLOWED_ORIGINS: ${{ secrets.CORS_ALLOWED_ORIGINS }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          WOC_NETWORK: ${{ secrets.WOC_NETWORK }}
+          WOC_API_KEY: ${{ secrets.WOC_API_KEY }}
+          UTXO_CHANGE_ADDRESS: ${{ secrets.UTXO_CHANGE_ADDRESS }}
