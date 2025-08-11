@@ -1,5 +1,7 @@
 # PatchProof™ Authentication API – Production Deployment Guide
 
+![CI](https://github.com/Saifullah62/patchProof_PROD/actions/workflows/ci.yml/badge.svg)
+
 ## Overview
 This API provides secure authentication, chain of custody, and on-chain anchoring for PatchProof™ records. It is designed for production with robust error handling, modular funding, JWT-based authentication, and flexible database and secrets management.
 
@@ -61,10 +63,11 @@ The default is 100 requests per 15 minutes per IP. Adjust for your needs in `app
 
 ## 🚀 CI/CD & Automated Testing
 
-This project is set up for continuous integration and deployment.
+This project is set up for continuous integration and deployment via GitHub Actions.
 
-- **Lint & Test:** Runs `npm test` (Jest + Supertest) on every push.
-- **MongoDB Readiness:** Tests will automatically use `mongodb-memory-server` when `MONGODB_URI` is not set.
+- **CI Workflow:** See `.github/workflows/ci.yml` (Node 18, cached npm, runs tests on push/PR to `main`).
+- **Tests:** Runs `npm test` (Jest + Supertest) on every push.
+- **MongoDB Readiness:** Tests can use `mongodb-memory-server` when `MONGODB_URI` is not set.
 
 ---
 
@@ -79,14 +82,15 @@ This project is set up for continuous integration and deployment.
 
 ---
 
-## ⚙️ Environment Setup
+## Environment Setup
 
 - Copy `.env.example` to `.env` and set all required secrets.
 - Start server:
-  ```sh
-  node app.js
+```sh
+node app.js
+```
 
-  📖 API Documentation
+📖 API Documentation
 OpenAPI/Swagger docs are available at /docs when the server is running.
 
 See the openapi.yaml file for full endpoint specifications.
