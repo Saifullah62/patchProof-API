@@ -1,3 +1,4 @@
+require('dotenv').config(); // This must be the first line
 // app.js (Finalized Production Architecture)
 const express = require('express');
 const helmet = require('helmet');
