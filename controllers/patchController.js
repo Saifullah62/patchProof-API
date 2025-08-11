@@ -16,7 +16,8 @@ const registerSchema = Joi.object({
 
 const transferSchema = Joi.object({
     newOwnerAddress: Joi.string().required(),
-    currentOwnerSignature: Joi.string().required()
+    currentOwnerSignature: Joi.string().required(),
+    currentOwnerPubKey: Joi.string().hex().required(),
 }).unknown(false);
 
 const txidParamSchema = Joi.object({
@@ -130,12 +131,30 @@ class PatchController {
         }
 
       const { txid: currentTxid } = req.params;
-      const { newOwnerAddress, currentOwnerSignature } = req.body;
+      const { newOwnerAddress, currentOwnerSignature, currentOwnerPubKey } = req.body;
       
       const currentRecord = await dbService.getRecordByTxid(currentTxid);
       if (!currentRecord) return res.status(404).json({ error: { message: 'Record not found for the given TXID' } });
       
       const uid_tag_id = currentRecord.product.uid_tag_id;
+
+      // Load current state to check current owner address
+      const state = await dbService.getPatchState(uid_tag_id);
+      if (!state) return res.status(404).json({ error: { message: 'Patch state not found' } });
+
+      // 1) PubKey must map to current owner address
+      const derivedAddress = BlockchainService.publicKeyHexToAddress(currentOwnerPubKey);
+      if (!state.current_owner_address || derivedAddress !== state.current_owner_address) {
+        return res.status(403).json({ error: { message: 'Caller is not the current owner' } });
+      }
+
+      // 2) Verify signature over canonical message to prevent replay
+      const message = { purpose: 'transfer_ownership', uid_tag_id, currentTxid, newOwnerAddress };
+      const hashBuf = BlockchainService.computeSha256(message);
+      const ok = BlockchainService.verifySignature(hashBuf, currentOwnerSignature, currentOwnerPubKey);
+      if (!ok) {
+        return res.status(403).json({ error: { message: 'Invalid owner signature' } });
+      }
 
       // In a real implementation, you would construct a new OP_RETURN with updated ownership data
       const opReturnData = [Buffer.from(`TRANSFER ${uid_tag_id} TO ${newOwnerAddress}`)];

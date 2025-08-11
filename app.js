@@ -13,10 +13,13 @@ const { initDb, closeDb } = require('./config/db');
 // Controllers
 const patchController = require('./controllers/patchController');
 const authController = require('./controllers/authController');
+const adminController = require('./controllers/adminController');
 const setupSwagger = require('./swagger');
 
 // Middleware
 const requestIdMiddleware = require('./requestId');
+const apiKeyMiddleware = require('./apiKeyMiddleware');
+const jwtAuthMiddleware = require('./jwtAuthMiddleware');
 
 async function startServer() {
   try {
@@ -54,15 +57,17 @@ async function startServer() {
     // --- Routes (V1 Only) ---
     app.post('/v1/auth/request-verification', authController.requestVerification);
     app.post('/v1/auth/submit-verification', authController.submitVerification);
-    app.post('/v1/patches', patchController.registerPatch);
+    app.post('/v1/patches', apiKeyMiddleware, patchController.registerPatch);
     app.get('/v1/patches/verify/:uid_tag_id', patchController.verifyPatch);
-    app.post('/v1/patches/:txid/transfer-ownership', patchController.transferOwnership);
-    app.post('/v1/patches/:uid_tag_id/unlock-content', patchController.unlockContent);
+    app.post('/v1/patches/:txid/transfer-ownership', apiKeyMiddleware, jwtAuthMiddleware, patchController.transferOwnership);
+    app.post('/v1/patches/:uid_tag_id/unlock-content', apiKeyMiddleware, patchController.unlockContent);
     
     // --- API Docs ---
     setupSwagger(app);
     
     // --- Operational Endpoints ---
+    app.get('/v1/admin/utxo-health', apiKeyMiddleware, adminController.getUtxoHealth);
+    app.post('/v1/admin/batch-anchor', apiKeyMiddleware, adminController.batchAnchor);
     app.get('/health', (req, res) => res.json({ status: 'ok' }));
     app.get('/ready', (req, res) => {
         const isDbConnected = mongoose.connection.readyState === 1;
@@ -76,10 +81,36 @@ async function startServer() {
     // 404 handler
     app.use((req, res) => res.status(404).json({ error: { message: 'Not Found' } }));
 
-    // Error handler
+    // Error handler with contextual logging (redacted)
     app.use((err, req, res, next) => {
       const log = req.log || logger;
-      log.error({ message: 'Unhandled exception', error: err.message, stack: err.stack });
+      const headers = { ...req.headers };
+      if (headers.authorization) headers.authorization = '[REDACTED]';
+      if (headers['x-api-key']) headers['x-api-key'] = '[REDACTED]';
+      let body = req.body;
+      try {
+        // Shallow redact common secrets
+        if (body && typeof body === 'object') {
+          body = { ...body };
+          for (const k of Object.keys(body)) {
+            if (/password|token|secret|signature/i.test(k)) body[k] = '[REDACTED]';
+          }
+        }
+      } catch (_) {
+        body = '[unserializable]';
+      }
+      log.error({
+        message: 'Unhandled exception',
+        error: err.message,
+        stack: err.stack,
+        request: {
+          id: req.id,
+          method: req.method,
+          url: req.originalUrl || req.url,
+          headers,
+          body,
+        },
+      });
       res.status(500).json({ error: { message: 'Internal Server Error' } });
     });
 

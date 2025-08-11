@@ -36,6 +36,96 @@ paths:
                     type: string
         '503':
           description: Not ready
+  /v1/admin/utxo-health:
+    get:
+      summary: UTXO pool health
+      description: Returns counts and total satoshis for UTXOs by status.
+      security:
+        - ApiKeyAuth: []
+      responses:
+        '200':
+          description: Health summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available:
+                    type: object
+                    properties:
+                      count:
+                        type: integer
+                      totalSatoshis:
+                        type: integer
+                  locked:
+                    type: object
+                    properties:
+                      count:
+                        type: integer
+                      totalSatoshis:
+                        type: integer
+                  spent:
+                    type: object
+                    properties:
+                      count:
+                        type: integer
+                      totalSatoshis:
+                        type: integer
+  /v1/admin/batch-anchor:
+    post:
+      summary: Batch anchor unanchored records
+      description: Computes a Merkle root from unanchored records and anchors it on-chain, updating each record with a Merkle proof and anchor txid.
+      security:
+        - ApiKeyAuth: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+          required: false
+          description: Maximum number of records to process (default 100, max 1000)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+      responses:
+        '200':
+          description: Anchoring result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  txid:
+                    type: string
+                  processed:
+                    type: integer
+                  updated:
+                    type: integer
+                  message:
+                    type: string
+        '500':
+          description: Broadcast failure or server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
   /v1/auth/request-verification:
     post:
       summary: Request verification code
@@ -76,6 +166,8 @@ paths:
   /v1/patches:
     post:
       summary: Register a patch
+      security:
+        - ApiKeyAuth: []
       requestBody:
         required: true
         content:
@@ -83,30 +175,22 @@ paths:
             schema:
               type: object
               properties:
-                uid_tag_id:
+                product:
+                  type: object
+                  properties:
+                    uid_tag_id:
+                      type: string
+                  required:
+                    - uid_tag_id
+                metadata:
+                  type: object
+                paymentAddress:
                   type: string
-                batch_id:
-                  type: string
-                manufacturer_public_key:
-                  type: string
-                serial_number:
-                  type: string
-                product_model:
-                  type: string
-                issue_date:
-                  type: string
-                expiry_date:
-                  type: string
-                signature:
-                  type: string
-              required:
-                - uid_tag_id
-                - manufacturer_public_key
-                - serial_number
-                - product_model
-                - issue_date
-                - expiry_date
-                - signature
+                auth:
+                  type: object
+                  properties:
+                    owner:
+                      type: string
       responses:
         '200':
           description: Registered
@@ -125,6 +209,9 @@ paths:
   /v1/patches/{txid}/transfer-ownership:
     post:
       summary: Transfer patch ownership
+      security:
+        - ApiKeyAuth: []
+          bearerAuth: []
       parameters:
         - in: path
           name: txid
@@ -138,19 +225,24 @@ paths:
             schema:
               type: object
               properties:
-                new_owner_address:
+                newOwnerAddress:
                   type: string
-                current_owner_signature:
+                currentOwnerSignature:
+                  type: string
+                currentOwnerPubKey:
                   type: string
               required:
-                - new_owner_address
-                - current_owner_signature
+                - newOwnerAddress
+                - currentOwnerSignature
+                - currentOwnerPubKey
       responses:
         '200':
           description: Ownership transferred
   /v1/patches/{uid_tag_id}/unlock-content:
     post:
       summary: Unlock content for a patch
+      security:
+        - ApiKeyAuth: []
       parameters:
         - in: path
           name: uid_tag_id
@@ -171,3 +263,14 @@ paths:
       responses:
         '200':
           description: Content unlocked
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
