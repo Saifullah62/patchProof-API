@@ -1,8 +1,5 @@
-# .github/workflows/ci.yml
+name: CI/CD
 
-name: CI
-
-# Controls when the workflow will run
 on:
   push:
     branches: [ main, master ]
@@ -10,14 +7,23 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
+  # Job 1: Run Linting and Unit Tests
   unit-and-lint:
+    name: Lint & Unit Test
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18.x, 20.x]
+        node-version: [20.x]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,9 +32,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          cache: npm
 
-      - name: Create env file (unit)
+      - name: Create .env file for testing
         run: |
           cat > .env << 'EOF'
           NODE_ENV=test
@@ -45,12 +51,12 @@ jobs:
           EOF
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Lint
         run: npm run lint --if-present
 
-      - name: Run unit tests (with JUnit)
+      - name: Run unit tests
         env:
           CI: true
           JEST_JUNIT_OUTPUT: reports/junit-unit.xml
@@ -63,9 +69,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: code-coverage-report
-          path: |
-            coverage/
-            coverage/**
+          path: coverage/
 
       - name: Upload JUnit Report (unit)
         if: always()
@@ -74,31 +78,29 @@ jobs:
           name: junit-report-unit
           path: reports/junit-unit.xml
 
+  # Job 2: Run End-to-End Tests
   e2e:
+    name: E2E Test
     runs-on: ubuntu-latest
-    needs: unit-and-lint
-    permissions:
-      contents: read
+    timeout-minutes: 30
+    needs: unit-and-lint # Depends on the first job
     services:
       mongo:
         image: mongo:6
-        ports: ["27017:27017"]
+        ports: ['27017:27017']
         options: >-
           --health-cmd "mongosh --quiet --eval \"db.adminCommand({ ping: 1 })\" || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 20
+          --health-interval 10s --health-timeout 5s --health-retries 20
       redis:
         image: redis:7-alpine
-        ports: ["6379:6379"]
+        ports: ['6379:6379']
         options: >-
           --health-cmd "redis-cli ping || exit 1"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
+          --health-interval 5s --health-timeout 3s --health-retries 20
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18.x, 20.x]
+        node-version: [20.x]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -107,9 +109,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          cache: npm
 
-      - name: Create env file (e2e)
+      - name: Create .env file for E2E tests
         run: |
           cat > .env << 'EOF'
           NODE_ENV=production
@@ -130,11 +132,12 @@ jobs:
           EOF
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Start server
+      - name: Start server in background
         run: |
           nohup npm start > server.log 2>&1 &
+          # Wait for the server to become healthy
           for i in {1..60}; do
             if curl -fsS http://127.0.0.1:3001/health > /dev/null; then
               echo "Server is up"
@@ -142,9 +145,10 @@ jobs:
             fi
             sleep 2
           done
+          # Final check to fail the step if server is not up
           curl -fsS http://127.0.0.1:3001/health
 
-      - name: Run E2E tests (with JUnit)
+      - name: Run E2E tests
         env:
           CI: true
           BASE_URL: http://127.0.0.1:3001
@@ -160,9 +164,30 @@ jobs:
           name: junit-report-e2e
           path: reports/junit-e2e.xml
 
-      - name: Upload Server Log
-        if: always()
+      - name: Upload Server Log on Failure
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: server-log
+          name: server-log-e2e
           path: server.log
+
+  # Job 3: Deploy to Production
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: e2e # Run only after all tests pass
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' # Deploy only on a push to the main branch
+
+    steps:
+      - name: Deploy to Droplet via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            echo "Executing deployment script on host..."
+            # The deploy script handles pulling code, installing dependencies,
+            # and restarting the service.
+            /bin/bash /opt/patchproof/ops/deploy.sh
