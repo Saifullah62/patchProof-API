@@ -25,42 +25,39 @@ async function main() {
   await initDb();
 
   const lockName = 'utxo-manager-process';
-  const lockToken = await lockManager.acquireLock(lockName, 10 * 60 * 1000); // 10-minute lock
+  const leaseMs = 10 * 60 * 1000; // 10-minute lease with heartbeat extension
+  const result = await lockManager.withLockHeartbeat(lockName, leaseMs, async () => {
+    logger.info(`[UTXO Manager] Starting run. Dry Run: ${argv.dryRun}`);
 
-  if (!lockToken) {
-    logger.info('[UTXO Manager] Process is already running (lock not acquired). Exiting.');
-    await closeDb();
-    return;
-  }
+    try {
+      // 1. Sync on-chain state with the local database.
+      logger.info('[1/3] Syncing local UTXO pool with on-chain state...');
+      const syncResult = await utxoManagerService.syncUtxos(argv.dryRun);
+      logger.info(syncResult, 'Sync complete.');
 
-  logger.info(`[UTXO Manager] Starting run. Dry Run: ${argv.dryRun}`);
+      // 2. Sweep dust UTXOs to consolidate funds.
+      logger.info('[2/3] Checking for dust to sweep...');
+      const sweepResult = await utxoManagerService.sweepDust(argv.dryRun);
+      logger.info(sweepResult, 'Dust sweep check complete.');
 
-  try {
-    // 1. Sync on-chain state with the local database.
-    // This service method will handle fetching on-chain data and marking local UTXOs as spent if necessary.
-    logger.info('[1/3] Syncing local UTXO pool with on-chain state...');
-    const syncResult = await utxoManagerService.syncUtxos(argv.dryRun);
-    logger.info(syncResult, 'Sync complete.');
+      // 3. Split a large UTXO if the available pool is too small.
+      logger.info('[3/3] Checking if UTXO pool needs splitting...');
+      const splitResult = await utxoManagerService.splitIfNeeded(argv.dryRun);
+      logger.info(splitResult, 'Split check complete.');
 
-    // 2. Sweep dust UTXOs to consolidate funds.
-    // The service encapsulates the logic for finding and sweeping dust.
-    logger.info('[2/3] Checking for dust to sweep...');
-    const sweepResult = await utxoManagerService.sweepDust(argv.dryRun);
-    logger.info(sweepResult, 'Dust sweep check complete.');
+      return { ok: true };
+    } catch (error) {
+      logger.error('[UTXO Manager] A critical error occurred during the run:', error);
+      process.exitCode = 1;
+      return { ok: false, error };
+    } finally {
+      await closeDb();
+      logger.info('[UTXO Manager] Run finished.');
+    }
+  });
 
-    // 3. Split a large UTXO if the available pool is too small.
-    // The service encapsulates the logic for checking the pool and performing the split.
-    logger.info('[3/3] Checking if UTXO pool needs splitting...');
-    const splitResult = await utxoManagerService.splitIfNeeded(argv.dryRun);
-    logger.info(splitResult, 'Split check complete.');
-
-  } catch (error) {
-    logger.error('[UTXO Manager] A critical error occurred during the run:', error);
+  if (!result.ok && result.error !== 'LOCK_NOT_ACQUIRED') {
     process.exitCode = 1;
-  } finally {
-    await lockManager.releaseLock(lockName, lockToken);
-    await closeDb();
-    logger.info('[UTXO Manager] Run finished.');
   }
 }
 

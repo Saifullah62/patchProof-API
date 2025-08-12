@@ -40,53 +40,52 @@ async function main() {
   await initDb();
 
   const lockName = `sweep-address-${argv.changeAddress}`;
-  const lockToken = await lockManager.acquireLock(lockName, 5 * 60 * 1000); // 5-minute lock
-
-  if (!lockToken) {
-    logger.info('Sweep process for this address is already running. Exiting.');
-    await closeDb();
-    return;
-  }
-
-  logger.info({
-    message: 'Starting change address sweep...',
-    changeAddress: argv.changeAddress,
-    changeKeyId: argv.changeKeyId,
-    destinationAddress: argv.destinationAddress,
-    dryRun: argv.dryRun,
-  });
-
-  try {
-    // Delegate to blockchain service for UTXO fetch, fee calc, signing, and broadcast
-    const result = await blockchainService.sweepAddress({
-      addressToSweep: argv.changeAddress,
-      signingKeyIdentifier: argv.changeKeyId,
+  const leaseMs = 5 * 60 * 1000; // 5 minutes with heartbeat
+  const res = await lockManager.withLockHeartbeat(lockName, leaseMs, async () => {
+    logger.info({
+      message: 'Starting change address sweep...',
+      changeAddress: argv.changeAddress,
+      changeKeyId: argv.changeKeyId,
       destinationAddress: argv.destinationAddress,
-      isDryRun: argv.dryRun,
+      dryRun: argv.dryRun,
     });
 
-    if (argv.dryRun) {
-      logger.info('--- DRY RUN COMPLETE ---');
-      logger.info(`Found ${result.utxosSwept.length} UTXO(s) to sweep.`);
-      logger.info(`Total value: ${result.totalSatoshis} satoshis.`);
-      logger.info(`Estimated fee: ${result.estimatedFee} satoshis.`);
-      logger.info(`Transaction would send ${result.finalAmount} satoshis.`);
-      logger.info('No transaction was broadcast.');
-    } else {
-      if (result.success) {
-        logger.info(`Successfully broadcasted sweep transaction: ${result.txid}`);
+    try {
+      const result = await blockchainService.sweepAddress({
+        addressToSweep: argv.changeAddress,
+        signingKeyIdentifier: argv.changeKeyId,
+        destinationAddress: argv.destinationAddress,
+        isDryRun: argv.dryRun,
+      });
+
+      if (argv.dryRun) {
+        logger.info('--- DRY RUN COMPLETE ---');
+        logger.info(`Found ${result.utxosSwept.length} UTXO(s) to sweep.`);
+        logger.info(`Total value: ${result.totalSatoshis} satoshis.`);
+        logger.info(`Estimated fee: ${result.estimatedFee} satoshis.`);
+        logger.info(`Transaction would send ${result.finalAmount} satoshis.`);
+        logger.info('No transaction was broadcast.');
       } else {
-        logger.error('Failed to broadcast sweep transaction:', { error: result.error });
-        process.exitCode = 1;
+        if (result.success) {
+          logger.info(`Successfully broadcasted sweep transaction: ${result.txid}`);
+        } else {
+          logger.error('Failed to broadcast sweep transaction:', { error: result.error });
+          process.exitCode = 1;
+        }
       }
+      return true;
+    } catch (error) {
+      logger.error('An error occurred during the sweep process:', error);
+      process.exitCode = 1;
+      return false;
+    } finally {
+      await closeDb();
+      logger.info('Sweep script finished.');
     }
-  } catch (error) {
-    logger.error('An error occurred during the sweep process:', error);
-    process.exitCode = 1;
-  } finally {
-    try { await lockManager.releaseLock(lockName, lockToken); } catch (_) {}
-    await closeDb();
-    logger.info('Sweep script finished.');
+  });
+
+  if (!res.ok && res.error === 'LOCK_NOT_ACQUIRED') {
+    logger.info('Sweep process for this address is already running. Exiting.');
   }
 }
 

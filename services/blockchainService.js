@@ -29,6 +29,10 @@ const utxoService = require('./utxoService');
 const wocClient = require('../clients/wocClient');
 const logger = require('../logger');
 const kmsSigner = require('./kmsSigner');
+let configService;
+try { configService = require('./configService'); } catch (_) { configService = null; }
+let SettingsModel;
+try { SettingsModel = require('../models/Settings'); } catch (_) { SettingsModel = null; }
 
 // Centralized aliases for readability (no behavior change)
 const BsvBN = (bsv.crypto && bsv.crypto.BN) || bsv.BN;
@@ -235,8 +239,10 @@ async function sweepAddress({ addressToSweep, signingKeyIdentifier, destinationA
     totalSatoshis += sat;
   }
 
-  // Use centralized fee policy
-  const feePerKb = parseInt(process.env.FEE_PER_KB || '500', 10);
+  // Use centralized dynamic fee policy
+  const feePerKb = (module.exports.v2 && typeof module.exports.v2.getFeePerKb === 'function')
+    ? module.exports.v2.getFeePerKb()
+    : (parseInt(process.env.FEE_PER_KB || '500', 10));
   tx.to(destinationAddress, Math.max(0, totalSatoshis - 1)); // placeholder; adjusted after fee
   tx.change(destinationAddress);
   tx.feePerKb(feePerKb);
@@ -311,8 +317,19 @@ class InsufficientFundsError extends (extErrors.InsufficientFundsError || Error)
 class BlockchainServiceV2 {
   constructor() {
     this.network = (process.env.WOC_NETWORK || 'main').toLowerCase();
-    this.feePerKb = parseInt(process.env.FEE_PER_KB, 10) || 512;
-    logger.info(`[BlockchainServiceV2] Initialized for network: ${this.network} fee=${this.feePerKb} sat/kb`);
+    this._feeEnvDefault = parseInt(process.env.FEE_PER_KB, 10) || 512;
+    logger.info(`[BlockchainServiceV2] Initialized for network: ${this.network}`);
+  }
+
+  getFeePerKb() {
+    // Priority: Config cache (Settings) -> WoC recommendation -> env default
+    const fromConfig = configService ? configService.getNumber('FEE_PER_KB', NaN) : NaN;
+    if (Number.isFinite(fromConfig)) return fromConfig;
+    const fromClient = (wocClient && typeof wocClient.getRecommendedFeePerKb === 'function') ? wocClient.getRecommendedFeePerKb() : null;
+    if (Number.isFinite(fromClient)) return fromClient;
+    // Settings may be synchronous cache if loaded; fall back to env
+    // Note: Avoid blocking calls here; callers can pass in or we use env
+    return this._feeEnvDefault;
   }
 
   toHashBuf(obj) {
@@ -349,7 +366,7 @@ class BlockchainServiceV2 {
     const dataScript = bsv.Script.buildSafeDataOut(opReturnData);
     tx.addOutput(new bsv.Transaction.Output({ script: dataScript, satoshis: 0 }));
     tx.change(changeAddress);
-    tx.feePerKb(this.feePerKb);
+    tx.feePerKb(this.getFeePerKb());
     const fee = tx.getFee();
     if (total < fee) {
       throw new InsufficientFundsError(`Total funds (${total}) are less than the estimated fee (${fee}).`);

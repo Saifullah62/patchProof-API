@@ -15,52 +15,50 @@ async function main() {
   await initDb();
 
   const lockName = 'utxo-reaper-process';
-  // Attempt to acquire the lock with a 5-minute TTL.
-  const lockToken = await lockManager.acquireLock(lockName, 5 * 60 * 1000);
+  const leaseMs = 5 * 60 * 1000; // 5 minutes with heartbeat
+  const res = await lockManager.withLockHeartbeat(lockName, leaseMs, async () => {
+    logger.info('[Reaper] Starting orphaned UTXO lock reaper...');
 
-  if (!lockToken) {
-    logger.info('[Reaper] Reaper process is already running (lock not acquired). Exiting.');
-    await closeDb();
-    return;
-  }
+    try {
+      const argv = yargs(hideBin(process.argv))
+        .option('age', {
+          describe: 'The minimum age in minutes for a lock to be considered orphaned',
+          type: 'number',
+          default: parseInt(process.env.UTXO_REAPER_MINUTES || '15', 10),
+        })
+        .option('limit', {
+          describe: 'The maximum number of locks to reap in this run',
+          type: 'number',
+          default: parseInt(process.env.UTXO_REAPER_BATCH_LIMIT || '500', 10),
+        })
+        .strict(false)
+        .help(false)
+        .parse();
 
-  logger.info('[Reaper] Starting orphaned UTXO lock reaper...');
+      const result = await utxoService.unlockOrphanedLocked(argv.age, argv.limit);
+      const unlocked = result.modifiedCount ?? result.unlocked ?? result.modified ?? 0;
+      const matched = result.matchedCount ?? result.matched ?? 0;
 
-  try {
-    const argv = yargs(hideBin(process.argv))
-      .option('age', {
-        describe: 'The minimum age in minutes for a lock to be considered orphaned',
-        type: 'number',
-        default: parseInt(process.env.UTXO_REAPER_MINUTES || '15', 10),
-      })
-      .option('limit', {
-        describe: 'The maximum number of locks to reap in this run',
-        type: 'number',
-        default: parseInt(process.env.UTXO_REAPER_BATCH_LIMIT || '500', 10),
-      })
-      .strict(false)
-      .help(false)
-      .parse();
-
-    const result = await utxoService.unlockOrphanedLocked(argv.age, argv.limit);
-    const unlocked = result.modifiedCount ?? result.unlocked ?? result.modified ?? 0;
-    const matched = result.matchedCount ?? result.matched ?? 0;
-
-    if (matched > 0) {
-      logger.info(`[Reaper] Examined ${matched} locked UTXOs; unlocked ${unlocked}.`);
-    } else if (unlocked > 0) {
-      logger.info(`[Reaper] Unlocked ${unlocked} orphaned UTXO(s).`);
-    } else {
-      logger.info('[Reaper] No orphaned UTXOs found meeting the criteria.');
+      if (matched > 0) {
+        logger.info(`[Reaper] Examined ${matched} locked UTXOs; unlocked ${unlocked}.`);
+      } else if (unlocked > 0) {
+        logger.info(`[Reaper] Unlocked ${unlocked} orphaned UTXO(s).`);
+      } else {
+        logger.info('[Reaper] No orphaned UTXOs found meeting the criteria.');
+      }
+      return true;
+    } catch (error) {
+      logger.error('[Reaper] An error occurred during the reaping process:', error);
+      process.exitCode = 1;
+      return false;
+    } finally {
+      await closeDb();
+      logger.info('[Reaper] Reaper process finished.');
     }
-  } catch (error) {
-    logger.error('[Reaper] An error occurred during the reaping process:', error);
-    process.exitCode = 1;
-  } finally {
-    // Always attempt to release the lock and close the DB connection.
-    try { await lockManager.releaseLock(lockName, lockToken); } catch (_) {}
-    await closeDb();
-    logger.info('[Reaper] Reaper process finished.');
+  });
+
+  if (!res.ok && res.error === 'LOCK_NOT_ACQUIRED') {
+    logger.info('[Reaper] Reaper process is already running (lock not acquired). Exiting.');
   }
 }
 

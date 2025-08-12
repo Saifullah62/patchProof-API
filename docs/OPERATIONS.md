@@ -16,7 +16,10 @@ This runbook covers day-2 operations: backups, monitoring, logs, rate limits, al
 - App health endpoints:
   - `/v1/admin/utxo-health` (pool snapshot; protect with API key)
   - `/api/svd/canary` (admin gated; self-test + metrics)
+  - `/metrics` (Prometheus; optionally API-key gated via `METRICS_REQUIRE_API_KEY=1`)
+  - `/internal/metrics` (Prometheus; always API-key gated; exposes internal counters like `pp_challenges_issued`, `pp_jwt_success`). Block `/internal/*` at the edge (Nginx).
 - Logs (Winston): ship to your aggregator (e.g., CloudWatch, ELK). Tag with `DEPLOY_SHA`.
+  - Request tracing: a `requestId` is propagated via `AsyncLocalStorage` and automatically included in all logs.
 - SVD metrics: counters and challenge age histogram by `kid` and `DEPLOY_SHA`.
 - DB metrics: enable Mongo profiler in staging via `scripts/profile-db.js` for slow query investigation.
  - Grafana: import `grafana/svd-dashboard.json` (datasource uid/name: `Prometheus`). See `docs/GRAFANA.md`.

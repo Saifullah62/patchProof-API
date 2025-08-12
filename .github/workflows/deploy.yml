@@ -1,0 +1,47 @@
+# .github/workflows/deploy.yml
+
+name: CD - Deploy to DigitalOcean
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+concurrency:
+  group: deploy-${{ github.event.workflow_run.head_branch || github.event.repository.default_branch }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy (main)
+    runs-on: ubuntu-latest
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.head_branch == github.event.repository.default_branch }}
+    steps:
+      - name: Checkout repository at tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Validate required deploy secrets
+        run: |
+          set -euo pipefail
+          : "${{ secrets.SSH_HOST }}" > /dev/null
+          : "${{ secrets.SSH_USERNAME }}" > /dev/null
+          : "${{ secrets.SSH_PRIVATE_KEY }}" > /dev/null
+          echo "All required SSH secrets are present"
+
+      - name: Deploy to DigitalOcean Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd /opt/patchproof
+            ./deploy.sh

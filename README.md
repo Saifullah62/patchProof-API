@@ -33,6 +33,13 @@ For production, you must set the following environment variables. Do not hardcod
 - `MONGODB_URI` – Required. The full connection string for your MongoDB Atlas cluster.
 - `DB_NAME` – The name of the database to use within your cluster (e.g., `appdb`).
 
+⚠️ Production enforcement
+
+- In `production`, the server fails fast during startup if `MONGODB_URI` does not include credentials.
+- Example (MongoDB, with auth):
+  - `mongodb://dbuser:STRONG_PASS@mongo-host:27017/appdb?authSource=admin`
+  - `mongodb+srv://dbuser:STRONG_PASS@cluster0.xxxx.mongodb.net/appdb`
+
 #### Secrets Management
 - `MASTER_SECRET` – Required. A strong, unique secret for deterministic key derivation.
 - `API_KEY` – Required. The API key for accessing protected endpoints.
@@ -48,6 +55,17 @@ All transaction signing is delegated to an external KMS. The application never h
 #### Other
 - `PORT` – Port to run the API (default: 3001).
 - `NODE_ENV` - Set to `production` for live environments.
+  
+#### Redis
+- `REDIS_URL` – Redis connection string for rate limiting, BullMQ, and caches.
+- `REDIS_PASSWORD` – Optional. Required in production if the password is not embedded in `REDIS_URL`.
+
+⚠️ Production enforcement
+
+- In `production`, the server fails fast if Redis authentication is not provided.
+- Provide either:
+  - `REDIS_URL` with inline credentials, e.g., `redis://default:STRONG_PASSWORD@redis-host:6379`, or
+  - `REDIS_PASSWORD` alongside host/port `REDIS_URL` (without inline pass) or `REDIS_HOST`/`REDIS_PORT`.
  
 #### External KMS (Signing)
 - `KMS_SIGN_URL` – HTTPS endpoint for external KMS signing. The service never handles raw private keys.
@@ -56,7 +74,7 @@ All transaction signing is delegated to an external KMS. The application never h
 
 #### WhatsOnChain (WOC) Client
 - `WOC_API_KEY` – Optional. API key header used by `clients/wocClient.js` when present.
-- `WOC_TIMEOUT_MS` – Optional. HTTP timeout in milliseconds for WOC requests (default: 8000).
+- `WOC_TIMEOUT_MS` – Optional. HTTP timeout in milliseconds for WOC requests (default: 15000).
 - `WOC_RETRIES` – Optional. Number of retry attempts on retryable failures (5xx or network), default: 2.
 - `WOC_NETWORK` – `main` | `test` network selector (already listed under configuration docs).
 
@@ -64,7 +82,50 @@ Initialization:
 - The WOC client is initialized at server startup in `app.js` (`wocClient.initialize()`).
 - Standalone scripts that use the client (e.g., `scripts/check-health.js`, `scripts/addUtxo.js`) explicitly call `wocClient.initialize()` before use.
 
+#### Metrics (Prometheus)
+- `METRICS_ENABLED` – Optional. Enable metrics collection (default: true).
+- Endpoint: `GET /internal/metrics` (protected by API key) exposes counters:
+  - `pp_challenges_issued`
+  - `pp_jwt_success`
+  Use edge blocking (e.g., Nginx) to restrict `/internal/*` in addition to API key gating.
+
 ---
+
+## Production Boot Verification (Windows PowerShell)
+
+Quick commands to verify production startup enforces authenticated MongoDB and Redis. These validate the fail-fast checks without needing live services.
+
+### Negative test (should fail fast on missing credentials)
+
+```powershell
+# Clear env first (minimal set)
+Remove-Item Env:\MONGODB_URI -ErrorAction SilentlyContinue
+Remove-Item Env:\REDIS_URL -ErrorAction SilentlyContinue
+Remove-Item Env:\REDIS_PASSWORD -ErrorAction SilentlyContinue
+
+$env:NODE_ENV = 'production'
+
+# Intentionally INSECURE URIs (no credentials)
+$env:MONGODB_URI = 'mongodb://127.0.0.1:27017/appdb?authSource=admin'
+$env:REDIS_URL   = 'redis://127.0.0.1:6379'
+
+node app.js
+```
+
+### Positive auth check (passes auth checks; may fail on connectivity if services aren’t running)
+
+```powershell
+$env:NODE_ENV        = 'production'
+$env:MONGODB_URI     = 'mongodb://dbuser:STRONG_PASS@127.0.0.1:27017/appdb?authSource=admin&serverSelectionTimeoutMS=2000&connectTimeoutMS=2000'
+$env:REDIS_URL       = 'redis://127.0.0.1:6379'
+$env:REDIS_PASSWORD  = 'STRONG_PASS'
+
+node app.js
+```
+
+Expectations:
+- The first run exits early due to missing MongoDB and/or Redis authentication.
+- The second run proceeds past auth enforcement; if Mongo/Redis aren’t available, you’ll see normal connection errors instead.
 
 ## DigitalOcean Droplet Deployment (systemd + Nginx)
 
@@ -90,6 +151,9 @@ Deploy with:
 ```bash
 sudo -E bash /opt/patchproof/ops/deploy.sh
 ```
+
+Notes:
+- The deploy script ensures `/var/log/patchproof` exists with correct ownership and permissions for the runtime user.
 
 Rollback with (previous commit by default, or pass a git ref):
 
@@ -364,40 +428,39 @@ Recommended next step: implement a dynamic UTXO management service that can:
 
 Until that is implemented, ensure the static UTXO remains sufficiently funded and is not double-spent by concurrent operations.
 
-### UTXO Pool Maintenance (Orphaned Lock Reaper)
+### UTXO Pool Maintenance (Stale Lock Reversion)
 
-If the server crashes or is terminated abruptly, a UTXO may be left in a `locked` state, preventing it from being used. A reaper script is provided to clean up these orphaned locks.
+If the server crashes or is terminated abruptly, a UTXO may be left in a `locked` state, preventing it from being used. A janitorial script is provided to clean up these stale locks.
 
-This script should be run on a regular schedule (e.g., every 15–30 minutes) using a scheduler like cron or Windows Task Scheduler.
+This script should be run on a regular schedule (e.g., every 15–60 minutes) using a scheduler like cron or Windows Task Scheduler.
 
 How it works:
-- Finds all UTXOs with status `locked` whose `updated_at` is older than the threshold (default 15 minutes) and resets their status to `available`.
+- Finds UTXOs with status `locked` whose `updated_at` is older than the threshold and resets their status to `available`.
 
-Usage:
+Usage (npm script):
 
 ```sh
-node scripts/reapLocks.js
+npm run utxos:revert-stale-locks -- --older-than-mins 60 --limit 500 --dry-run=false
 ```
 
-Configuration (optional environment variables):
-- `UTXO_REAPER_MINUTES` – threshold age in minutes (default: 15)
-- `UTXO_REAPER_BATCH_LIMIT` – max number of UTXOs to process in one run (default: 500)
+Direct node usage:
 
-Examples
+```sh
+node scripts/revert-stale-locks.js --older-than-mins 60 --limit 500 --dry-run=false
+```
 
-Linux/macOS (cron) – run every 15 minutes:
+Linux/macOS (cron) – run hourly:
 
 ```cron
-*/15 * * * * /usr/bin/env node /path/to/your/project/scripts/reapLocks.js >> /var/log/reaper.log 2>&1
+0 * * * * /usr/bin/env node /opt/patchproof/scripts/revert-stale-locks.js --older-than-mins 60 --limit 500 --dry-run=false >> /var/log/patchproof/revert-stale-locks.log 2>&1
 ```
 
 Windows (Task Scheduler) – PowerShell snippet:
 
 ```powershell
-# Creates a task that runs every 15 minutes
-$action = New-ScheduledTaskAction -Execute "node" -Argument "C:\\path\\to\\project\\scripts\\reapLocks.js"
-$trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 15) -Once -At (Get-Date).Date
-Register-ScheduledTask -Action $action -Trigger $trigger -TaskName "PatchProof UTXO Reaper" -Description "Unlocks orphaned UTXOs for the PatchProof API."
+$action = New-ScheduledTaskAction -Execute "node" -Argument "C:\\opt\\patchproof\\scripts\\revert-stale-locks.js --older-than-mins 60 --limit 500 --dry-run=false"
+$trigger = New-ScheduledTaskTrigger -Daily -At 2am
+Register-ScheduledTask -Action $action -Trigger $trigger -TaskName "PatchProof UTXO Stale Lock Reversion" -Description "Unlocks stale UTXOs for the PatchProof API."
 ```
 
 ### Change Address Sweep (KMS-based)

@@ -25,8 +25,17 @@ class JobService {
     }
 
     const redisUrl = process.env.REDIS_URL || process.env.REDIS_CONNECTION_STRING || 'redis://127.0.0.1:6379';
+    // Enforce authenticated Redis in production
+    if (process.env.NODE_ENV === 'production') {
+      const hasPasswordInUrl = typeof redisUrl === 'string' && /^redis(s)?:\/\//i.test(redisUrl) && /:\\S+@/.test(redisUrl);
+      const hasExplicitPassword = !!process.env.REDIS_PASSWORD;
+      if (!hasPasswordInUrl && !hasExplicitPassword) {
+        logger.error('[JobService] In production, Redis must require authentication. Provide REDIS_URL with password (redis://:pass@host:6379) or REDIS_PASSWORD.');
+        throw new Error('Unsafe Redis configuration for production: authentication required');
+      }
+    }
     try {
-      this.redisConnection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+      this.redisConnection = new IORedis(redisUrl, { maxRetriesPerRequest: null, password: process.env.REDIS_PASSWORD || undefined });
       this.redisConnection.on('connect', () => logger.info('[JobService] Connecting to Redis for BullMQ...'));
       this.redisConnection.on('ready', () => {
         logger.info('[JobService] Redis connection for BullMQ is ready.');

@@ -6,6 +6,7 @@
 */
 
 const BASE_URL = process.env.BASE_URL;
+const maybe = BASE_URL ? describe : describe.skip;
 const API_KEY = process.env.API_KEY;
 
 async function fetchJson(url, opts = {}) {
@@ -23,7 +24,7 @@ function withApiKey(headers = {}) {
   return h;
 }
 
-describe('Admin UTXO E2E', () => {
+maybe('Admin UTXO E2E', () => {
   test('GET /v1/admin/utxo-health returns pool and funding info', async () => {
     const res = await fetchJson(`${BASE_URL}/v1/admin/utxo-health`, { method: 'GET', headers: withApiKey() });
     expect(res.ok).toBe(true);

@@ -2,7 +2,7 @@
 
 This document lists the primary HTTP endpoints and their behaviors.
 
-Base URL: http://localhost:3000
+Base URL: http://localhost:3001
 All JSON responses set Cache-Control appropriately. Sensitive routes may use no-store.
 
 ## Authentication
@@ -20,6 +20,20 @@ POST /v1/patches
   - auth: { owner }
 - Flow: Validates schema → selects UTXO → builds/signs tx → broadcasts → persists record.
 - Errors: 400 (validation), 401 (auth), 402 (insufficient funds), 500 (broadcast)
+
+GET /v1/patches/pending/registration/:id
+- Purpose: Poll the status of a pending registration by its id.
+- Response: { status: "pending" | "anchoring" | "confirmed" | "failed", ... }
+
+GET /v1/patches/pending/transfer/:id
+- Purpose: Poll the status of a pending ownership transfer by its id.
+- Response: { status: "pending" | "anchoring" | "confirmed" | "failed", ... }
+
+POST /v1/patches/:txid/transfer-ownership
+- Purpose: Transfer ownership of a patch to a new address.
+- Auth: Requires BOTH API key (`x-api-key`) and Bearer JWT (`Authorization: Bearer <jwt>`)
+- Body: `{ newOwnerAddress, currentOwnerPubKey, currentOwnerSignature }`
+- Validation: Ensures `currentOwnerPubKey` matches current owner on record and signature is valid over canonical payload.
 
 ## Admin UTXO Health
 GET /v1/admin/utxo-health
@@ -70,6 +84,16 @@ GET /api/svd/kid
 
 GET /api/svd/canary (admin-gated)
 - Purpose: Health/self-test/metrics (challenge age histogram, counters).
+
+## Metrics
+
+GET /metrics
+- Purpose: Prometheus exposition of SVD/app metrics.
+- Gating: Optionally gated by API key via `METRICS_REQUIRE_API_KEY=1`.
+
+GET /internal/metrics
+- Purpose: Prometheus exposition of internal counters (e.g., `pp_challenges_issued`, `pp_jwt_success`).
+- Gating: Always API-key protected. Additionally recommended to block `/internal/*` at the edge (Nginx).
 
 Error Codes
 - `SVD_REPLAYED` (409)

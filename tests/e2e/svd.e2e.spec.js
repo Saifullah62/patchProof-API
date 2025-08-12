@@ -9,6 +9,7 @@
 const bsv = require('bsv');
 
 const BASE_URL = process.env.BASE_URL;
+const maybe = BASE_URL ? describe : describe.skip;
 
 async function fetchJson(url, opts = {}) {
   const res = await fetch(url, { headers: { 'content-type': 'application/json', ...(opts.headers||{}) }, ...opts });
@@ -42,7 +43,7 @@ function signMWithDerivedP2c(wif, Mhex) {
   return sig.toDER().toString('hex');
 }
 
-describe('SVD E2E (production-like, KMS-first)', () => {
+maybe('SVD E2E (production-like, KMS-first)', () => {
   test('register -> begin -> complete -> replay prevention, headers and payload', async () => {
     const userId = randomUserId();
     const pmcPriv = new bsv.PrivateKey();

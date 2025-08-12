@@ -8,6 +8,20 @@ let mongoServer = null;
 // Helper function for retries with exponential backoff
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Basic check for presence of credentials in MongoDB URI
+// Accepts forms like:
+// - mongodb://user:pass@host/db
+// - mongodb+srv://user:pass@cluster/db
+// Note: This is a sanity check; actual auth is enforced by MongoDB server.
+function hasAuthInMongoUri(uri) {
+  try {
+    if (typeof uri !== 'string') return false;
+    // Quick allow-list: if SRV/standard with user:pass@
+    if (/^mongodb(\+srv)?:\/\//i.test(uri) && /:\S+@/.test(uri)) return true;
+    return false;
+  } catch (_) { return false; }
+}
+
 async function initDb() {
   if (mongoose.connection.readyState === 1) {
     logger.info('[DB] Connection already established.');
@@ -27,6 +41,12 @@ async function initDb() {
   if (!uri) {
     logger.error('[DB] Database connection string is missing (MONGODB_URI).');
     throw new Error('Database connection string is missing (MONGODB_URI).');
+  }
+
+  // Enforce authenticated connections in production
+  if ((process.env.NODE_ENV === 'production') && !hasAuthInMongoUri(uri)) {
+    logger.error('[DB] In production, MONGODB_URI must include credentials (mongodb://user:pass@host/...).');
+    throw new Error('Unsafe MongoDB configuration: credentials required in MONGODB_URI for production.');
   }
 
   // --- Production-Ready Connection Options ---

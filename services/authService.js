@@ -7,6 +7,7 @@ const logger = require('../logger');
 const { getSecret } = require('../secrets');
 const jobService = require('./jobService');
 const bcrypt = require('bcrypt');
+const metrics = require('./metricsService');
 
 const JWT_SECRET = getSecret('JWT_SECRET');
 const BCRYPT_ROUNDS = Number(process.env.VERIFY_CODE_SALT_ROUNDS || 10);
@@ -104,6 +105,7 @@ class AuthService {
       { upsert: true, new: true }
     );
     await this._sendVerificationCodeEmail(identifier, code);
+    try { metrics.inc('pp_challenges_issued', { method: 'email' }); } catch (_) {}
     return {
       success: true,
       message: 'Verification code sent.',
@@ -129,6 +131,7 @@ class AuthService {
       iss: 'patchproof:auth-service',
     };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
+    try { metrics.inc('pp_jwt_success', { method: 'email' }); } catch (_) {}
     return { success: true, token };
   }
 }

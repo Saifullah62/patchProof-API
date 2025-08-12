@@ -1,7 +1,8 @@
 /* E2E SVD kid discovery */
 const BASE_URL = process.env.BASE_URL;
+const maybe = BASE_URL ? describe : describe.skip;
 
-describe('SVD kid discovery', () => {
+maybe('SVD kid discovery', () => {
   test('GET /api/svd/kid returns kid when configured', async () => {
     const res = await fetch(`${BASE_URL}/api/svd/kid`);
     expect(res.ok).toBe(true);

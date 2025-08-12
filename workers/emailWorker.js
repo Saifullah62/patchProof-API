@@ -63,7 +63,15 @@ async function start() {
 
   // 2. Initialize Redis Connection and Worker
   const redisUrl = process.env.REDIS_URL || process.env.REDIS_CONNECTION_STRING || null;
-  connection = redisUrl ? new IORedis(redisUrl, { maxRetriesPerRequest: null })
+  if (process.env.NODE_ENV === 'production') {
+    const hasPasswordInUrl = typeof redisUrl === 'string' && /^redis(s)?:\/\//i.test(redisUrl) && /:\\S+@/.test(redisUrl);
+    const hasExplicitPassword = !!process.env.REDIS_PASSWORD;
+    if (!hasPasswordInUrl && !hasExplicitPassword) {
+      logger.error('[EmailWorker] Unsafe Redis configuration for production: authentication required');
+      process.exit(1);
+    }
+  }
+  connection = redisUrl ? new IORedis(redisUrl, { maxRetriesPerRequest: null, password: process.env.REDIS_PASSWORD || undefined })
                         : new IORedis({
                             host: process.env.REDIS_HOST || '127.0.0.1',
                             port: parseInt(process.env.REDIS_PORT || '6379', 10),

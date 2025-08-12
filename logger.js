@@ -2,10 +2,21 @@
 // A robust, production-grade Winston logger with environment-specific formatting.
 const { createLogger, format, transports } = require('winston');
 const { combine, timestamp, json, errors, colorize, printf } = format;
+let requestContext;
+try { requestContext = require('./services/requestContext'); } catch (_) { requestContext = null; }
 
 // --- Environment-Specific Formatting ---
 // Use a simple, colorized format for development and structured JSON for production.
+const withRequestId = format((info) => {
+  if (requestContext) {
+    const rid = requestContext.get('requestId');
+    if (rid && !info.requestId) info.requestId = rid;
+  }
+  return info;
+});
+
 const devFormat = combine(
+  withRequestId(),
   colorize(),
   timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   printf(({ timestamp, level, message, ...meta }) => {
@@ -15,6 +26,7 @@ const devFormat = combine(
 );
 
 const prodFormat = combine(
+  withRequestId(),
   timestamp(),
   errors({ stack: true }),
   json()

@@ -25,7 +25,7 @@ This document covers how PatchProof manages its UTXO pool, including health chec
 ## Splitting
 - Triggered when pool < `MIN_UTXO_COUNT` (or `UTXO_MIN_POOL`)
 - Plans outputs around `UTXO_SPLIT_SIZE_SATS` (or MIN/MAX range)
-- Fee-aware: uses `FEE_SAT_PER_BYTE` and `UTXO_FEE_BUFFER`
+- Fee-aware: uses dynamic `feePerKb` from Settings (preferred) → provider recommendation via `wocClient` → env fallback, plus `UTXO_FEE_BUFFER`
 - Change sent to `UTXO_CHANGE_ADDRESS`.
 - Broadcast via WOC with retry on "Missing inputs"
 - Cooldown: `SPLIT_COOLDOWN_MS` (persisted in Mongo)
@@ -68,6 +68,19 @@ KMS signer contract (summary):
 ```
 node scripts/utxo-manager.js            # real run
 $env:SPLIT_DRY_RUN='1'; node scripts/utxo-manager.js  # dry run plan
+```
+
+### Stale Lock Reversion (Janitor)
+Unlock UTXOs stuck in `locked` for longer than a threshold:
+
+```
+npm run utxos:revert-stale-locks -- --older-than-mins 60 --limit 500 --dry-run=false
+```
+
+Cron example (hourly):
+
+```
+0 * * * * /usr/bin/env node /opt/patchproof/scripts/revert-stale-locks.js --older-than-mins 60 --limit 500 --dry-run=false >> /var/log/patchproof/revert-stale-locks.log 2>&1
 ```
 
 To sweep the change address, see the Sweeping section above for `scripts/sweep-change.js` usage.

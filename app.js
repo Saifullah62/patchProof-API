@@ -22,6 +22,7 @@ const svdService = require('./services/svdService');
 const kmsSigner = require('./services/kmsSigner');
 const utxoManagerService = require('./services/utxoManagerService');
 const wocClient = require('./clients/wocClient');
+const configService = require('./services/configService');
 
 // Controllers
 const patchController = require('./controllers/patchController');
@@ -29,6 +30,7 @@ const authController = require('./controllers/authController');
 const adminController = require('./controllers/adminController');
 const setupSwagger = require('./swagger');
 const authService = require('./services/authService');
+const metrics = require('./services/metricsService');
 
 // Middleware
 const requestIdMiddleware = require('./requestId');
@@ -37,9 +39,19 @@ const jwtAuthSvd = require('./middleware/jwtAuthSvd');
 
 async function startServer() {
   try {
+    // Global process-level safety nets
+    process.on('unhandledRejection', (reason, promise) => {
+      try { logger.error('Unhandled Rejection at:', { promise, reason }); } catch (_) {}
+    });
+    process.on('uncaughtException', (err) => {
+      try { logger.error('Uncaught Exception:', err); } catch (_) {}
+    });
     // Validate required secrets before initializing dependencies
     try { validateRequiredSecrets(); } catch (e) { logger.error('[Secrets] validation error', e); throw e; }
     await initDb();
+    // Initialize Settings-backed config cache (non-blocking, periodic refresh)
+    try { configService.initialize(60_000); logger.info('[config] ConfigService initialized'); } catch (e) { logger.warn('[config] ConfigService init failed:', e.message); }
+
     // Initialize distributed lock manager (Redis) before any lock usage
     try {
       await lockManager.initialize();
@@ -143,8 +155,9 @@ async function startServer() {
       keyGenerator,
     };
     const redisUrl = process.env.REDIS_URL || process.env.REDIS_ENDPOINT || 'redis://localhost:6379';
+    const redisPassword = process.env.REDIS_PASSWORD || undefined;
     try {
-      const redisClient = createClient({ url: redisUrl });
+      const redisClient = createClient({ url: redisUrl, password: redisPassword });
       await redisClient.connect();
       logger.info('[rate-limit] Connected to Redis');
       limiterOptions.store = new RedisStore({
@@ -206,6 +219,18 @@ async function startServer() {
     app.use('/api', require('./routes/svdKid'));
     app.use('/api', apiKeyMiddleware, require('./routes/svdCanary'));
 
+    // --- Internal metrics endpoint (protect with API key) ---
+    app.get('/internal/metrics', apiKeyMiddleware, (req, res) => {
+      try {
+        const body = metrics.renderPrometheus();
+        res.setHeader('Content-Type', 'text/plain; version=0.0.4');
+        return res.status(200).send(body);
+      } catch (e) {
+        logger.error('[metrics] render failed', e);
+        return res.status(500).send('metrics unavailable');
+      }
+    });
+
     // --- Routes (V1 Only) ---
     const requireApiKeyInProd = (req, res, next) => {
       if (process.env.NODE_ENV === 'test') return next();
@@ -254,13 +279,54 @@ async function startServer() {
     setupSwagger(app);
     // Static markdown docs (raw) available at /docs/md
     app.use('/docs/md', express.static(path.join(__dirname, 'docs')));
+    // Shareable Proof-of-Existence certificates (static HTML)
+    app.use('/certificates', express.static(path.join(__dirname, 'public', 'certificates')));
+    // Generate certificate PDF via headless browser
+    app.get('/certificates/pdf', async (req, res) => {
+      const { dataHash, txid, blockHeight, timestamp, network } = req.query || {};
+      if (!dataHash || !txid) {
+        return res.status(400).json({ error: { message: 'Missing required query params: dataHash and txid' } });
+      }
+      let browser;
+      try {
+        // Lazy import to avoid cold start cost on app boot
+        const puppeteer = require('puppeteer');
+        const base = `${req.protocol}://${req.get('host')}`;
+        const params = new URLSearchParams();
+        params.set('dataHash', String(dataHash));
+        params.set('txid', String(txid));
+        if (blockHeight) params.set('blockHeight', String(blockHeight));
+        if (timestamp) params.set('timestamp', String(timestamp));
+        if (network) params.set('network', String(network));
+        const targetUrl = `${base}/certificates/certificate.html?${params.toString()}`;
+
+        browser = await puppeteer.launch({
+          args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        });
+        const page = await browser.newPage();
+        await page.goto(targetUrl, { waitUntil: 'networkidle0', timeout: 30000 });
+        const pdf = await page.pdf({ format: 'A4', printBackground: true });
+
+        res.setHeader('Content-Type', 'application/pdf');
+        const safeTxid = String(txid).slice(0, 64);
+        res.setHeader('Content-Disposition', `attachment; filename="patchproof-certificate-${safeTxid}.pdf"`);
+        return res.status(200).end(pdf);
+      } catch (err) {
+        return res.status(500).json({ error: { message: 'Failed to generate PDF', details: err?.message || String(err) } });
+      } finally {
+        try { if (browser) await browser.close(); } catch (_) {}
+      }
+    });
     
     // --- Operational Endpoints ---
     const svdMetrics = require('./services/svdMetrics');
+    // Admin UTXO ops
     app.get('/v1/admin/utxo-health', apiKeyMiddleware, adminController.getUtxoHealth);
     app.post('/v1/admin/utxo-maintain', apiKeyMiddleware, adminController.triggerMaintenance);
     app.post('/v1/admin/batch-anchor', apiKeyMiddleware, adminController.batchAnchor);
+    // Liveness
     app.get('/health', (req, res) => res.json({ status: 'ok' }));
+    // Metrics text renderer
     const metricsHandler = async (req, res) => {
       try {
         res.set('Cache-Control', 'no-store');

@@ -12,7 +12,8 @@ class WocClient {
 
   initialize() {
     const apiKey = process.env.WOC_API_KEY;
-    const timeout = parseInt(process.env.WOC_TIMEOUT_MS, 10) || 8000;
+    // Reasonable default timeout to avoid hanging I/O on external dependency
+    const timeout = parseInt(process.env.WOC_TIMEOUT_MS, 10) || 15000;
 
     this.axiosInstance = axios.create({
       baseURL: 'https://api.whatsonchain.com',
@@ -107,6 +108,14 @@ class WocClient {
   async getChainInfo() {
     const network = this._network();
     return this._request({ url: `/v1/bsv/${network}/chain/info` });
+  }
+
+  // Optional: recommended fee rate (sat/kB). Returns number or null if not available.
+  // Currently sources from environment for ops control; can be extended to query a provider.
+  getRecommendedFeePerKb() {
+    const v = process.env.WOC_FEE_PER_KB || process.env.FEE_PER_KB;
+    const n = v ? parseInt(v, 10) : NaN;
+    return Number.isFinite(n) ? n : null;
   }
 }
 

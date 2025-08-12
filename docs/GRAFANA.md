@@ -37,6 +37,8 @@ After import, you should see:
 
 Note: `sha` should be set to your deployment SHA (DEPLOY_SHA) if your metrics integration includes it.
 
+Scraping note: In addition to `/metrics`, the service exposes `/internal/metrics` (API-key gated) for internal counters (e.g., passwordless issuance/success). Configure your Prometheus job with the required header and restrict network access.
+
 ## KPIs
 
 - Success Rate (%) = rate(complete) / rate(begin) * 100

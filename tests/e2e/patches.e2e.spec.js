@@ -7,6 +7,7 @@ const bsv = require('bsv');
 const crypto = require('crypto');
 
 const BASE_URL = process.env.BASE_URL;
+const maybe = BASE_URL ? describe : describe.skip;
 
 function randomUid() {
   return `e2e-uid-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
@@ -59,7 +60,7 @@ async function pollPendingTransfer(id, { timeoutMs = 120000, intervalMs = 2000 }
   throw new Error('Timeout waiting for pending transfer');
 }
 
-describe('Patches E2E (registration, verification, transfer, unlock)', () => {
+maybe('Patches E2E (registration, verification, transfer, unlock)', () => {
   test('full lifecycle happy path', async () => {
     // Generate initial owner keypair
     const ownerPriv = new bsv.PrivateKey();

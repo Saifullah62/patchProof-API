@@ -15,6 +15,7 @@ This document provides a high-level view of services, layers, and key flows.
 - BlockchainService (`services/blockchainService.js`)
   - v2 builds inputs/outputs and computes sighashes; signing is delegated to an external KMS via `services/kmsSigner.js` using a `keyIdentifier`.
   - Integrates with WhatsOnChain (WOC) for UTXO lookup/broadcast with robust retry (e.g., on "Missing inputs").
+  - Fee selection: uses dynamic fee-per-KB with priority Settings → provider recommendation (`wocClient`) → environment fallback.
 - UTXO Services
   - `models/Utxo.js`: UTXO pool with statuses: unconfirmed, available, locked, spent.
   - `services/utxoService.js`: key-agnostic, atomic DAL operating on `keyIdentifier`; provides selection/lock/spend/unlock with bulk ops and an orphaned lock reaper. No `.save()` usage.
@@ -26,7 +27,9 @@ This document provides a high-level view of services, layers, and key flows.
   - BullMQ integration; lifecycle-managed `JobService` with explicit `initialize()`/`close()`.
   - `workers/emailWorker.js`: verifies SMTP/Redis on start, centralized logging, graceful shutdown on signals.
 - App/Server (`app.js`)
-  - Startup self-tests for BSV/lib drift; initializes SvdService, JobService, KmsSigner, Redis-backed caches, and lockManager. Exposes `/metrics` for Prometheus.
+  - Startup self-tests for BSV/lib drift; initializes SvdService, JobService, KmsSigner, Redis-backed caches, and lockManager.
+  - Metrics endpoints: `/metrics` (optionally API-key gated via `METRICS_REQUIRE_API_KEY`) and `/internal/metrics` (always API-key gated) for Prometheus.
+  - Logging: request-scoped `requestId` is propagated via `AsyncLocalStorage` and included automatically in Winston logs for end-to-end traceability.
 
 ## Security Controls
 - API key middleware performs constant-time comparison (`crypto.timingSafeEqual`) and loads the secret once at startup; production fails fast if `API_KEY` is missing.

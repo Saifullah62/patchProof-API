@@ -63,20 +63,11 @@ async function batchAnchorRecords() {
   await initDb();
 
   const lockName = 'batch-anchor-process';
-  // Attempt to acquire the lock with a 5-minute TTL to be safe.
-  const lockToken = await lockManager.acquireLock(lockName, 5 * 60 * 1000);
-
-  if (!lockToken) {
-    logger.info('Batch anchor process is already running (lock not acquired). Exiting.');
-    await closeDb();
-    return;
-  }
-
-  logger.info({ message: 'Lock acquired, starting batch anchoring process.', lockName, lockToken: 'REDACTED' });
-
+  const leaseMs = 5 * 60 * 1000; // 5 minutes with heartbeat
   let claimedRecordIds = [];
+  const res = await lockManager.withLockHeartbeat(lockName, leaseMs, async () => {
+    logger.info({ message: 'Lock acquired, starting batch anchoring process.', lockName });
 
-  try {
     const argv = yargs(hideBin(process.argv))
       .option('limit', {
         describe: 'The maximum number of records to anchor in this batch',
@@ -97,7 +88,7 @@ async function batchAnchorRecords() {
 
     if (claimedRecordIds.length === 0) {
       logger.info('No new records to anchor.');
-      return; // graceful
+      return true; // graceful
     }
 
     await AuthenticationRecord.updateMany(
@@ -142,9 +133,10 @@ async function batchAnchorRecords() {
 
     await AuthenticationRecord.bulkWrite(bulkOps);
     logger.info(`Successfully updated ${recordsToAnchor.length} records with anchor proof.`);
-  } catch (error) {
+    return true;
+  }).catch(async (error) => {
+    // Ensure revert on error
     logger.error('An error occurred during the batch anchoring process:', error);
-    // If an error occurred after claiming, revert the status back to 'pending' for the next run.
     if (claimedRecordIds.length > 0) {
       try {
         logger.info('Reverting status of claimed records back to "pending".');
@@ -157,13 +149,14 @@ async function batchAnchorRecords() {
       }
     }
     process.exitCode = 1; // Signal failure to scheduler
-  } finally {
-    try {
-      await lockManager.releaseLock(lockName, lockToken);
-      logger.info('Lock released.');
-    } catch (_) {}
+    return false;
+  }).finally(async () => {
     await closeDb();
     logger.info('Batch anchoring process finished.');
+  });
+
+  if (!res || (res && res.ok === false) || res === 'LOCK_NOT_ACQUIRED') {
+    // If lock not acquired, process would not run; not an error.
   }
 }
 

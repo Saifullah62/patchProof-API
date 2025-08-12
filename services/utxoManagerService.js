@@ -25,6 +25,7 @@ class UtxoManagerService {
     this.CHANGE_ADDRESS = process.env.UTXO_CHANGE_ADDRESS || process.env.CHANGE_ADDRESS || this.FUNDING_ADDRESS;
     this.SPLIT_LEASE_MS = parseInt(process.env.SPLIT_LEASE_MS || '300000', 10);
     this.FEE_PER_KB = parseInt(process.env.FEE_PER_KB || '500', 10);
+    this._lastConfigRefresh = 0;
   }
 
   initialize() {
@@ -33,6 +34,65 @@ class UtxoManagerService {
       if (process.env.NODE_ENV === 'production') process.exit(1);
     }
     logger.info('[UtxoManagerService] Initialized.');
+    // Non-blocking refresh from Settings to allow ops to tune without redeploy
+    this.refreshConfigFromSettings().catch((e) => logger.warn('[UtxoManagerService] Settings refresh failed (continuing with env defaults):', e.message));
+  }
+
+  async refreshConfigFromSettings() {
+    const now = Date.now();
+    if (now - this._lastConfigRefresh < 30_000) return; // throttle
+    const keys = [
+      'MIN_UTXO_COUNT',
+      'UTXO_SPLIT_SIZE_SATS',
+      'MAX_SPLIT_OUTPUTS',
+      'DUST_THRESHOLD_SATS',
+      'DUST_SWEEP_LIMIT',
+      'UTXO_MIN_CONFIRMATIONS',
+      'FEE_PER_KB',
+    ];
+    const rows = await Settings.find({ key: { $in: keys } }).lean();
+    const map = new Map(rows.map(r => [r.key, r.value]));
+    const num = (k, fallback) => {
+      const v = map.get(k);
+      const n = typeof v === 'string' ? parseInt(v, 10) : (typeof v === 'number' ? v : NaN);
+      return Number.isFinite(n) ? n : fallback;
+    };
+    const old = {
+      MIN_UTXO_COUNT: this.MIN_UTXO_COUNT,
+      UTXO_SPLIT_SIZE_SATS: this.UTXO_SPLIT_SIZE_SATS,
+      MAX_SPLIT_OUTPUTS: this.MAX_SPLIT_OUTPUTS,
+      DUST_THRESHOLD_SATS: this.DUST_THRESHOLD_SATS,
+      DUST_SWEEP_LIMIT: this.DUST_SWEEP_LIMIT,
+      MIN_CONFIRMATIONS: this.MIN_CONFIRMATIONS,
+      FEE_PER_KB: this.FEE_PER_KB,
+    };
+    this.MIN_UTXO_COUNT = num('MIN_UTXO_COUNT', this.MIN_UTXO_COUNT);
+    this.UTXO_SPLIT_SIZE_SATS = num('UTXO_SPLIT_SIZE_SATS', this.UTXO_SPLIT_SIZE_SATS);
+    this.MAX_SPLIT_OUTPUTS = num('MAX_SPLIT_OUTPUTS', this.MAX_SPLIT_OUTPUTS);
+    this.DUST_THRESHOLD_SATS = num('DUST_THRESHOLD_SATS', this.DUST_THRESHOLD_SATS);
+    this.DUST_SWEEP_LIMIT = num('DUST_SWEEP_LIMIT', this.DUST_SWEEP_LIMIT);
+    this.MIN_CONFIRMATIONS = Math.max(0, num('UTXO_MIN_CONFIRMATIONS', this.MIN_CONFIRMATIONS));
+    this.FEE_PER_KB = num('FEE_PER_KB', this.FEE_PER_KB);
+    this._lastConfigRefresh = now;
+    if (JSON.stringify(old) !== JSON.stringify({
+      MIN_UTXO_COUNT: this.MIN_UTXO_COUNT,
+      UTXO_SPLIT_SIZE_SATS: this.UTXO_SPLIT_SIZE_SATS,
+      MAX_SPLIT_OUTPUTS: this.MAX_SPLIT_OUTPUTS,
+      DUST_THRESHOLD_SATS: this.DUST_THRESHOLD_SATS,
+      DUST_SWEEP_LIMIT: this.DUST_SWEEP_LIMIT,
+      MIN_CONFIRMATIONS: this.MIN_CONFIRMATIONS,
+      FEE_PER_KB: this.FEE_PER_KB,
+    })) {
+      logger.info('[UtxoManagerService] Runtime config updated from Settings', {
+        MIN_UTXO_COUNT: this.MIN_UTXO_COUNT,
+        UTXO_SPLIT_SIZE_SATS: this.UTXO_SPLIT_SIZE_SATS,
+        MAX_SPLIT_OUTPUTS: this.MAX_SPLIT_OUTPUTS,
+        DUST_THRESHOLD_SATS: this.DUST_THRESHOLD_SATS,
+        DUST_SWEEP_LIMIT: this.DUST_SWEEP_LIMIT,
+        MIN_CONFIRMATIONS: this.MIN_CONFIRMATIONS,
+        FEE_PER_KB: this.FEE_PER_KB,
+      });
+    }
   }
 
   async syncUtxos(isDryRun = false) {
@@ -114,50 +174,51 @@ class UtxoManagerService {
     const deficit = Math.min(this.MIN_UTXO_COUNT - poolCount, this.MAX_SPLIT_OUTPUTS);
     const requiredSatoshis = (this.UTXO_SPLIT_SIZE_SATS * deficit) + 5000; // fee buffer
 
-    const lockToken = await lockManager.acquireLock('utxo_split_v2', this.SPLIT_LEASE_MS);
-    if (!lockToken) return { skipped: true, reason: 'lease_held', poolCount };
+    const locked = await lockManager.withLockHeartbeat('utxo_split_v2', this.SPLIT_LEASE_MS, async () => {
+      const selected = await Utxo.findOneAndUpdate(
+        { status: 'available', keyIdentifier: this.FUNDING_KEY_ID, satoshis: { $gte: requiredSatoshis } },
+        { $set: { status: 'locked', updated_at: new Date() } },
+        { sort: { satoshis: 1 }, new: true }
+      ).exec();
 
-    const selected = await Utxo.findOneAndUpdate(
-      { status: 'available', keyIdentifier: this.FUNDING_KEY_ID, satoshis: { $gte: requiredSatoshis } },
-      { $set: { status: 'locked', updated_at: new Date() } },
-      { sort: { satoshis: 1 }, new: true }
-    ).exec();
-
-    if (!selected) {
-      await lockManager.releaseLock('utxo_split_v2', lockToken);
-      return { success: false, error: 'no_large_utxo_available', required: requiredSatoshis };
-    }
-
-    try {
-      const tx = new bsv.Transaction();
-      const scriptHex = bsv.Script.buildPublicKeyHashOut(this.FUNDING_ADDRESS).toHex();
-      tx.from({ txid: selected.txid, vout: selected.vout, scriptPubKey: scriptHex, script: scriptHex, satoshis: selected.satoshis });
-      for (let i = 0; i < deficit; i++) {
-        tx.to(this.FUNDING_ADDRESS, this.UTXO_SPLIT_SIZE_SATS);
+      if (!selected) {
+        return { success: false, error: 'no_large_utxo_available', required: requiredSatoshis };
       }
-      tx.change(this.CHANGE_ADDRESS);
-      tx.feePerKb(this.FEE_PER_KB);
 
-      if (isDryRun) {
+      try {
+        const tx = new bsv.Transaction();
+        const scriptHex = bsv.Script.buildPublicKeyHashOut(this.FUNDING_ADDRESS).toHex();
+        tx.from({ txid: selected.txid, vout: selected.vout, scriptPubKey: scriptHex, script: scriptHex, satoshis: selected.satoshis });
+        for (let i = 0; i < deficit; i++) {
+          tx.to(this.FUNDING_ADDRESS, this.UTXO_SPLIT_SIZE_SATS);
+        }
+        tx.change(this.CHANGE_ADDRESS);
+        tx.feePerKb(this.FEE_PER_KB);
+
+        if (isDryRun) {
+          await utxoService.unlockUtxo(selected);
+          return { dryRun: true, outputs: deficit, fee: tx.getFee() };
+        }
+
+        const flags = bsv.crypto.Signature.SIGHASH_ALL | bsv.crypto.Signature.SIGHASH_FORKID;
+        const sighash = tx.sighashForUTXO(0, tx.inputs[0].output.script, tx.inputs[0].output.satoshis, flags).toString('hex');
+        const signatures = await kmsSigner.signBatch([{ keyIdentifier: this.FUNDING_KEY_ID, sighash }]);
+        blockchainService.v2.applySignatures(tx, signatures);
+        const txid = await blockchainService.v2.broadcast(tx.serialize());
+
+        await utxoService.spendUtxo(selected);
+        return { success: true, txid, outputs: deficit };
+      } catch (err) {
         await utxoService.unlockUtxo(selected);
-        await lockManager.releaseLock('utxo_split_v2', lockToken);
-        return { dryRun: true, outputs: deficit, fee: tx.getFee() };
+        throw err;
       }
+    });
 
-      const flags = bsv.crypto.Signature.SIGHASH_ALL | bsv.crypto.Signature.SIGHASH_FORKID;
-      const sighash = tx.sighashForUTXO(0, tx.inputs[0].output.script, tx.inputs[0].output.satoshis, flags).toString('hex');
-      const signatures = await kmsSigner.signBatch([{ keyIdentifier: this.FUNDING_KEY_ID, sighash }]);
-      blockchainService.v2.applySignatures(tx, signatures);
-      const txid = await blockchainService.v2.broadcast(tx.serialize());
-
-      await utxoService.spendUtxo(selected);
-      await lockManager.releaseLock('utxo_split_v2', lockToken);
-      return { success: true, txid, outputs: deficit };
-    } catch (err) {
-      await utxoService.unlockUtxo(selected);
-      await lockManager.releaseLock('utxo_split_v2', lockToken);
-      throw err;
+    if (!locked.ok) {
+      if (locked.error === 'LOCK_NOT_ACQUIRED') return { skipped: true, reason: 'lease_held', poolCount };
+      throw locked.error;
     }
+    return locked.result;
   }
 }
 

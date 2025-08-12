@@ -42,8 +42,45 @@ async function main() {
       process.exit(0);
     }
 
-    const res = await Utxo.updateMany(filter, { $set: { keyIdentifier } });
-    console.log(`Updated ${res.modifiedCount || 0} UTXO(s) with keyIdentifier.`);
+    // Stream and batch to avoid OOM on large collections
+    const argBatchSize = (() => {
+      const idx = process.argv.indexOf('--batch-size');
+      if (idx !== -1 && process.argv[idx + 1]) {
+        const n = parseInt(process.argv[idx + 1], 10);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return 500;
+    })();
+    const logEvery = (() => {
+      const idx = process.argv.indexOf('--log-every');
+      if (idx !== -1 && process.argv[idx + 1]) {
+        const n = parseInt(process.argv[idx + 1], 10);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return 10_000;
+    })();
+
+    const cursor = Utxo.find(filter).select('_id').lean().cursor({ batchSize: 1000 });
+    let batch = [];
+    let modified = 0;
+    let scanned = 0;
+    for await (const doc of cursor) {
+      scanned += 1;
+      batch.push(doc._id);
+      if (batch.length >= argBatchSize) {
+        const res = await Utxo.updateMany({ _id: { $in: batch } }, { $set: { keyIdentifier } });
+        modified += res.modifiedCount || 0;
+        batch = [];
+      }
+      if (scanned % logEvery === 0) {
+        console.log(`Scanned ${scanned}, updated so far ${modified}...`);
+      }
+    }
+    if (batch.length) {
+      const res = await Utxo.updateMany({ _id: { $in: batch } }, { $set: { keyIdentifier } });
+      modified += res.modifiedCount || 0;
+    }
+    console.log(`Completed. Scanned ${scanned}, updated ${modified} UTXO(s) with keyIdentifier.`);
     process.exit(0);
   } catch (e) {
     console.error('Migration failed:', e);

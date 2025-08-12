@@ -10,6 +10,7 @@ The application validates these secrets at startup and will exit in production i
 - API_KEY
 - MONGODB_URI
 - REDIS_URL
+  - Note: In production, Redis authentication is required. Provide password inline in `REDIS_URL` or via `REDIS_PASSWORD`.
 - UTXO_FUNDING_KEY_IDENTIFIER
 - UTXO_FUNDING_ADDRESS
 - UTXO_CHANGE_ADDRESS
@@ -18,7 +19,6 @@ The application validates these secrets at startup and will exit in production i
 - ISSUER_KEY_IDENTIFIER
 
 ## Core
-- MONGODB_URI: Mongo connection string
 - DB_NAME: Database name (default: patchproof_prod)
 - PORT: HTTP port (default: 3000)
 - NODE_ENV: development | production | test
@@ -27,7 +27,7 @@ The application validates these secrets at startup and will exit in production i
 ## Blockchain / UTXO
 - WOC_NETWORK: main | test (WhatsOnChain network)
 - WOC_API_KEY: Optional API key for WhatsOnChain requests (sent as `woc-api-key` header)
-- WOC_TIMEOUT_MS: HTTP timeout in milliseconds for WhatsOnChain requests (default 8000)
+- WOC_TIMEOUT_MS: HTTP timeout in milliseconds for WhatsOnChain requests (default 15000)
 - WOC_RETRIES: Number of retry attempts for retryable errors (default 2)
 - UTXO_CHANGE_ADDRESS: Optional change address to receive change from splits; if omitted, defaults to funding address
 - keyIdentifier (concept): Stable identifier for the funding key (e.g., public key string) provided by your KMS. Used by `scripts/addUtxo.js` to associate on-chain UTXOs to a managed key. No private keys are handled by scripts.
@@ -38,7 +38,7 @@ The application validates these secrets at startup and will exit in production i
   - UTXO_SPLIT_SIZE_SATS_MIN
   - UTXO_SPLIT_SIZE_SATS_MAX
 - MAX_SPLIT_OUTPUTS: Cap on outputs per split tx (default depends on service logic)
-- FEE_SAT_PER_BYTE: Fee rate (2–3 typical)
+- FEE_PER_KB (preferred): Recommended miner fee rate in satoshis per kilobyte. Can be set in the `Settings` collection and overridden by env. `blockchainService` uses this first, then falls back to provider recommendations, then env.
 - UTXO_FEE_BUFFER: Extra fee headroom (e.g., 3000)
 - UTXO_MIN_CONFIRMATIONS: Min confs to treat on-chain UTXOs as usable
 - SPLIT_COOLDOWN_MS: Cooldown between split operations (e.g., 900000 for 15 min)
@@ -52,6 +52,10 @@ The application validates these secrets at startup and will exit in production i
 - JOBS_ASYNC: 1 to enable BullMQ flows (optional)
 - REDIS_URL: Redis connection string for rate limiting, BullMQ, and SVD caches.
   - Production requires Redis availability; SVD challenge/replay caches are Redis-only and the app fails fast on startup if unavailable.
+  - In `production`, Redis must require authentication. Provide either:
+    - Inline password in URL, e.g., `redis://default:STRONG_PASSWORD@redis-host:6379`, or
+    - `REDIS_PASSWORD` alongside host/port in URL.
+  - The rate limiter in `app.js` also passes `REDIS_PASSWORD` to the node-redis client.
 
 ## Email / SMTP
 - SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS (or SMTP_PASSWORD): SMTP transport configuration for `workers/emailWorker.js`.
@@ -87,7 +91,9 @@ The application validates these secrets at startup and will exit in production i
 
 ## Deployment
 - DEPLOY_SHA: Optional release identifier included in metrics/logs
- - /metrics endpoint is exposed for Prometheus scraping via `prom-client`.
+ - Metrics endpoints:
+   - `/metrics` (SVD metrics and app basics). Optionally gated by API key via `METRICS_REQUIRE_API_KEY=1`.
+   - `/internal/metrics` (internal counters like `pp_challenges_issued`, `pp_jwt_success`) — always API-key gated.
 
 ## Tips
 - Never commit real secrets. For production, mount `/etc/patchproof/patchproof.env` (see DEPLOYMENT_DO.md).

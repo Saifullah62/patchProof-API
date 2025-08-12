@@ -131,7 +131,12 @@ class PatchController {
       await dbService.markRegistrationConfirmed(pending._id || pending.id, txid);
 
       if (req.log) req.log.info({ message: 'Patch registered successfully', txid, uid_tag_id });
-      return res.status(201).json({ message: 'Patch registered successfully', txid });
+      // Build shareable certificate URL (blockHeight/timestamp optional and may be filled later by client)
+      const mhash = Hash.sha256(Buffer.from(JSON.stringify(metadata || {}), 'utf8')).toString('hex');
+      const base = `${req.protocol}://${req.get('host')}`;
+      const certPath = `/certificates/certificate.html?dataHash=${encodeURIComponent(mhash)}&txid=${encodeURIComponent(txid)}`;
+      const certificateUrl = `${base}${certPath}`;
+      return res.status(201).json({ message: 'Patch registered successfully', txid, certificateUrl });
     } catch (err) {
       if (err.message.startsWith('Conflict:')) {
         return res.status(409).json({ error: { message: err.message } });
@@ -334,11 +339,23 @@ class PatchController {
       }
       const doc = await dbService.getPendingRegistrationById(id);
       if (!doc) return res.status(404).json({ error: { message: 'Pending registration not found' } });
+      let certificateUrl = null;
+      if (doc.txid) {
+        try {
+          const record = await dbService.getRecordByTxid(doc.txid);
+          if (record && record.metadata) {
+            const mhash = Hash.sha256(Buffer.from(JSON.stringify(record.metadata || {}), 'utf8')).toString('hex');
+            const base = `${req.protocol}://${req.get('host')}`;
+            certificateUrl = `${base}/certificates/certificate.html?dataHash=${encodeURIComponent(mhash)}&txid=${encodeURIComponent(doc.txid)}`;
+          }
+        } catch (_) { /* ignore */ }
+      }
       return res.json({
         id: doc._id,
         uid_tag_id: doc.uid_tag_id,
         status: doc.status,
         txid: doc.txid || null,
+        certificateUrl,
         error: doc.failure_reason || null,
         created_at: doc.created_at,
         updated_at: doc.updated_at,

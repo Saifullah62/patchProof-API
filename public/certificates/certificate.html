@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proof of Existence Certificate</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+    <style>
+        @media print {
+            body {
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .no-print {
+                display: none;
+            }
+        }
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .certificate-title {
+            font-family: 'Playfair Display', serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4 sm:p-6 lg:p-8">
+
+    <div class="max-w-4xl w-full">
+        <!-- Certificate Container -->
+        <div id="certificate" class="bg-white rounded-lg shadow-2xl border-4 border-gray-800 p-8 sm:p-12">
+            <div class="border-2 border-gray-300 rounded-md p-6 sm:p-10 relative">
+                <!-- Header -->
+                <div class="text-center mb-8">
+                    <div class="flex justify-center items-center mb-4">
+                         <!-- You can replace this with your own SVG logo -->
+                        <svg class="h-12 w-12 text-gray-800 mr-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.286zm0 13.036h.008v.008h-.008v-.008z" />
+                        </svg>
+                        <h1 class="certificate-title text-4xl font-bold text-gray-800">PatchProof</h1>
+                    </div>
+                    <p class="text-2xl font-semibold text-gray-600 tracking-wider">Proof of Existence</p>
+                </div>
+
+                <!-- Body -->
+                <div class="space-y-6 text-lg">
+                    <p class="text-gray-700">This is to certify that the data represented by the following hash was successfully anchored to the blockchain.</p>
+                    
+                    <div>
+                        <label class="font-semibold text-gray-500 text-sm block">DATA HASH (SHA-256)</label>
+                        <p id="dataHash" class="text-gray-800 font-mono bg-gray-100 p-3 rounded-md break-words text-base">loading...</p>
+                    </div>
+
+                    <div>
+                        <label class="font-semibold text-gray-500 text-sm block">ANCHOR TRANSACTION ID</label>
+                        <p id="txid" class="text-gray-800 font-mono bg-gray-100 p-3 rounded-md break-words text-base">loading...</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <label class="font-semibold text-gray-500 text-sm block">BLOCK NUMBER</label>
+                            <p id="blockHeight" class="text-gray-800 font-semibold text-2xl">loading...</p>
+                        </div>
+                        <div>
+                            <label class="font-semibold text-gray-500 text-sm block">CONFIRMATION TIMESTAMP</label>
+                            <p id="timestamp" class="text-gray-800 font-semibold text-2xl">loading...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer -->
+                <div class="mt-10 pt-6 border-t border-gray-300 text-center">
+                    <p class="text-gray-600 mb-4">Verify this record on a public block explorer:</p>
+                    <a id="verifyLink" href="#" target="_blank" class="inline-block bg-gray-800 text-white font-bold py-2 px-6 rounded-lg hover:bg-gray-700 transition-colors duration-300">
+                        View Transaction
+                    </a>
+                </div>
+
+                <!-- Watermark / Seal -->
+                <div class="absolute bottom-8 right-8 opacity-10">
+                    <svg class="h-24 w-24 text-gray-800" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.286zm0 13.036h.008v.008h-.008v-.008z" />
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="mt-6 text-center no-print">
+            <button onclick="downloadPDF()" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 transition-colors duration-300 shadow-lg">
+                Download as PDF
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // This function runs when the page loads to populate the certificate
+        document.addEventListener('DOMContentLoaded', function() {
+            const params = new URLSearchParams(window.location.search);
+
+            const dataHash = params.get('dataHash') || 'No data hash provided';
+            const txid = params.get('txid') || 'No transaction ID provided';
+            const blockHeight = params.get('blockHeight') || 'N/A';
+            const timestampParam = params.get('timestamp');
+
+            let formattedTimestamp = 'N/A';
+            if (timestampParam) {
+                const date = new Date(isNaN(timestampParam) ? timestampParam : parseInt(timestampParam) * 1000);
+                if (!isNaN(date)) {
+                    formattedTimestamp = date.toLocaleString('en-US', { 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZoneName: 'short'
+                    });
+                }
+            }
+
+            document.getElementById('dataHash').textContent = dataHash;
+            document.getElementById('txid').textContent = txid;
+            document.getElementById('blockHeight').textContent = blockHeight;
+            document.getElementById('timestamp').textContent = formattedTimestamp;
+            
+            const verifyLink = document.getElementById('verifyLink');
+            if (txid !== 'No transaction ID provided') {
+                const network = (new URLSearchParams(window.location.search).get('network') || 'main').toLowerCase();
+                const base = network === 'test' ? 'https://test.whatsonchain.com' : 'https://whatsonchain.com';
+                verifyLink.href = `${base}/tx/${txid}`;
+            } else {
+                verifyLink.href = '#';
+                verifyLink.style.pointerEvents = 'none';
+                verifyLink.style.opacity = '0.5';
+            }
+        });
+
+        function downloadPDF() {
+            window.print();
+        }
+    </script>
+
+</body>
+</html>

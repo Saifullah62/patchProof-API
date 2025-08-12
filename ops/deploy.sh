@@ -11,6 +11,7 @@ ENV_FILE="/etc/patchproof/patchproof.env"
 PM2_APP_NAME="patchproof-api" # The name given in the systemd service file
 HEALTH_CHECK_URL="http://localhost:3001/health"
 HEALTH_CHECK_TIMEOUT_SEC=60 # Max seconds to wait for the app to become healthy
+LOG_DIR="/var/log/patchproof"
 
 # --- Helper Functions ---
 log() { echo "[deploy] ==> $*"; }
@@ -59,6 +60,14 @@ sudo chmod 600 "$ENV_FILE" # Ensure correct permissions
 # Run database migrations or other pre-start tasks here
 log "Ensuring database indexes are up to date..."
 node scripts/db/ensure-indexes.js
+
+# Ensure log directory exists with correct permissions for the service user
+log "Ensuring log directory exists and is writable: $LOG_DIR"
+if [[ ! -d "$LOG_DIR" ]]; then
+  sudo mkdir -p "$LOG_DIR"
+fi
+sudo chown -R patchproof:patchproof "$LOG_DIR"
+sudo chmod 750 "$LOG_DIR"
 
 log "Build phase complete."
 

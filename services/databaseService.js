@@ -136,6 +136,14 @@ class DatabaseService {
     return AuthenticationRecord.findById(id).lean().exec();
   }
 
+  // --- Recovery helper: revert a failed pending record back to pending for re-queueing ---
+  async revertPending(pendingId) {
+    await AuthenticationRecord.updateOne(
+      { _id: pendingId, status: 'failed' },
+      { $set: { status: 'pending', failure_reason: null } }
+    ).exec();
+  }
+
   // Removed synchronous registerPatch/updateOwnership in favor of async state machine (pending -> confirmed)
 }
 

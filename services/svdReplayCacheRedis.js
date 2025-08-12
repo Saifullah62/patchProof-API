@@ -28,10 +28,21 @@ class SvdReplayCache {
       return;
     }
 
+    // Enforce authenticated Redis in production
+    if (process.env.NODE_ENV === 'production') {
+      const hasPasswordInUrl = typeof redisUrl === 'string' && /^redis(s)?:\/\//i.test(redisUrl) && /:\\S+@/.test(redisUrl);
+      const hasExplicitPassword = !!process.env.REDIS_PASSWORD;
+      if (!hasPasswordInUrl && !hasExplicitPassword) {
+        logger.error('[SvdReplayCache] In production, Redis must require authentication. Provide REDIS_URL with password (redis://:pass@host:6379) or REDIS_PASSWORD.');
+        process.exit(1);
+      }
+    }
+
     try {
       this.redisClient = new IORedis(redisUrl, {
         maxRetriesPerRequest: 3,
         enableOfflineQueue: false,
+        password: process.env.REDIS_PASSWORD || undefined,
       });
 
       this.redisClient.on('connect', () => logger.info('[SvdReplayCache] Connecting to Redis...'));
