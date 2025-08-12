@@ -6,21 +6,19 @@
   "license": "MIT",
   "author": {
     "name": "Bryan Daugherty",
-    "url": "https://github.com/Saifullah62",
     "x": "@BWDaugherty"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Saifullah62/patchProof_PROD.git"
+    "url": "https://github.com/Saifullah62/patchProof-API.git"
   },
-  "homepage": "https://github.com/Saifullah62/patchProof_PROD#readme",
+  "homepage": "https://github.com/Saifullah62/patchProof-API#readme",
   "bugs": {
-    "url": "https://github.com/Saifullah62/patchProof_PROD/issues"
+    "url": "https://github.com/Saifullah62/patchProof-API/issues"
   },
   "maintainers": [
     {
       "name": "Bryan Daugherty",
-      "url": "https://github.com/Saifullah62",
       "x": "@BWDaugherty"
     }
   ],

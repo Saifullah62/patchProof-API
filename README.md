@@ -1,7 +1,5 @@
 # PatchProof™ Authentication API – Production Deployment Guide
 
-![CI](https://github.com/Saifullah62/patchProof_PROD/actions/workflows/ci.yml/badge.svg)
-
 ## Overview
 This API provides secure authentication, chain of custody, and on-chain anchoring for PatchProof™ records. It is designed for production with robust error handling, modular funding, JWT-based authentication, and flexible database and secrets management.
 

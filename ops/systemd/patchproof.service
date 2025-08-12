@@ -3,7 +3,7 @@
 
 [Unit]
 Description=PatchProof API Service
-Documentation=https://github.com/Saifullah62/patchProof_PROD
+Documentation=https://github.com/Saifullah62/patchProof-API
 After=network.target
 
 [Service]
@@ -16,8 +16,8 @@ ExecStop=/usr/bin/pm2 stop patchproof-api
 
 # --- Security: Run as a dedicated, non-root user ---
 # You must create this user first: sudo useradd --system --no-create-home patchproof
-User=patchproof
-Group=patchproof
+User=u25-33a7zt7gneny
+Group=u25-33a7zt7gneny
 
 # --- Environment & Working Directory ---
 WorkingDirectory=/opt/patchproof

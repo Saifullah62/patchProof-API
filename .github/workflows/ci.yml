@@ -25,6 +25,13 @@ jobs:
       matrix:
         node-version: [20.x]
     steps:
+      - name: Debug preflight (unit)
+        run: |
+          echo "workflow=${{ github.workflow }}"
+          echo "run_id=${{ github.run_id }}"
+          echo "sha=${{ github.sha }}"
+          echo "ref=${{ github.ref }}"
+          echo "actor=${{ github.actor }}"
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -182,10 +189,10 @@ jobs:
       - name: Deploy to Droplet via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USERNAME }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: ${{ secrets.SSH_PORT }}
+          host: ${{ secrets.SSH_HOST2 }}
+          username: ${{ secrets.SSH_USERNAME2 }}
+          key: ${{ secrets.SSH_PRIVATE_KEY2 }}
+          port: ${{ secrets.SSH_PORT2 }}
           script: |
             echo "Executing deployment script on host..."
             # The deploy script handles pulling code, installing dependencies,
