@@ -18,21 +18,30 @@ const UtxoSchema = new mongoose.Schema({
     type: String,
     required: true,
   },
-  privKeyWIF: {
-    type: String, // Each UTXO has its own private key for signing
+  // Secure: do not store raw private keys. Use a stable key identifier.
+  keyIdentifier: {
+    type: String,
     required: true,
+    index: true,
   },
   status: {
     type: String,
-    enum: ['available', 'locked', 'spent'],
+    enum: ['unconfirmed', 'available', 'locked', 'spent'],
     default: 'available',
-    index: true, // Index for efficient querying of available UTXOs
+    index: true,
+  },
+  lockId: {
+    type: String,
+    default: null,
   },
 }, {
-  timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' }
+  timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
+  versionKey: 'version',
 });
 
 // Ensure that each UTXO (txid + vout) is unique
 UtxoSchema.index({ txid: 1, vout: 1 }, { unique: true });
+// Speed up selection queries by status/keyIdentifier/satoshis (descending for greedy picks)
+UtxoSchema.index({ status: 1, keyIdentifier: 1, satoshis: -1 });
 
 module.exports = mongoose.model('Utxo', UtxoSchema);

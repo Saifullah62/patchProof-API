@@ -2,275 +2,288 @@ openapi: 3.0.3
 info:
   title: PatchProof API
   version: 1.0.0
-  description: API for PatchProof authentication and patch management
-servers:
-  - url: http://localhost:3001
-paths:
-  /health:
-    get:
-      summary: Health check
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-  /ready:
-    get:
-      summary: Readiness check
-      responses:
-        '200':
-          description: Ready
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                  database:
-                    type: string
-        '503':
-          description: Not ready
-  /v1/admin/utxo-health:
-    get:
-      summary: UTXO pool health
-      description: Returns counts and total satoshis for UTXOs by status.
-      security:
-        - ApiKeyAuth: []
-      responses:
-        '200':
-          description: Health summary
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  available:
-                    type: object
-                    properties:
-                      count:
-                        type: integer
-                      totalSatoshis:
-                        type: integer
-                  locked:
-                    type: object
-                    properties:
-                      count:
-                        type: integer
-                      totalSatoshis:
-                        type: integer
-                  spent:
-                    type: object
-                    properties:
-                      count:
-                        type: integer
-                      totalSatoshis:
-                        type: integer
-  /v1/admin/batch-anchor:
-    post:
-      summary: Batch anchor unanchored records
-      description: Computes a Merkle root from unanchored records and anchors it on-chain, updating each record with a Merkle proof and anchor txid.
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: query
-          name: limit
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 1000
-          required: false
-          description: Maximum number of records to process (default 100, max 1000)
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                limit:
-                  type: integer
-                  minimum: 1
-                  maximum: 1000
-      responses:
-        '200':
-          description: Anchoring result
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  txid:
-                    type: string
-                  processed:
-                    type: integer
-                  updated:
-                    type: integer
-                  message:
-                    type: string
-        '500':
-          description: Broadcast failure or server error
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  error:
-                    type: string
-  /v1/auth/request-verification:
-    post:
-      summary: Request verification code
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                identifier:
-                  type: string
-              required:
-                - identifier
-      responses:
-        '200':
-          description: Verification initiated
-  /v1/auth/submit-verification:
-    post:
-      summary: Submit verification code
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                identifier:
-                  type: string
-                code:
-                  type: string
-              required:
-                - identifier
-                - code
-      responses:
-        '200':
-          description: Verified
-  /v1/patches:
-    post:
-      summary: Register a patch
-      security:
-        - ApiKeyAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                product:
-                  type: object
-                  properties:
-                    uid_tag_id:
-                      type: string
-                  required:
-                    - uid_tag_id
-                metadata:
-                  type: object
-                paymentAddress:
-                  type: string
-                auth:
-                  type: object
-                  properties:
-                    owner:
-                      type: string
-      responses:
-        '200':
-          description: Registered
-  /v1/patches/verify/{uid_tag_id}:
-    get:
-      summary: Verify a patch
-      parameters:
-        - in: path
-          name: uid_tag_id
-          schema:
-            type: string
-          required: true
-      responses:
-        '200':
-          description: Verification result
-  /v1/patches/{txid}/transfer-ownership:
-    post:
-      summary: Transfer patch ownership
-      security:
-        - ApiKeyAuth: []
-          bearerAuth: []
-      parameters:
-        - in: path
-          name: txid
-          schema:
-            type: string
-          required: true
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                newOwnerAddress:
-                  type: string
-                currentOwnerSignature:
-                  type: string
-                currentOwnerPubKey:
-                  type: string
-              required:
-                - newOwnerAddress
-                - currentOwnerSignature
-                - currentOwnerPubKey
-      responses:
-        '200':
-          description: Ownership transferred
-  /v1/patches/{uid_tag_id}/unlock-content:
-    post:
-      summary: Unlock content for a patch
-      security:
-        - ApiKeyAuth: []
-      parameters:
-        - in: path
-          name: uid_tag_id
-          schema:
-            type: string
-          required: true
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                token:
-                  type: string
-              required:
-                - token
-      responses:
-        '200':
-          description: Content unlocked
+  description: A secure API for registering digital assets ("patches"), managing ownership, and performing cryptographic authentication using Signature Value Distribution (SVD).
+  contact:
+    name: API Support
+    url: https://www.patchproof.com/support
+    email: support@patchproof.com
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
 
+servers:
+  - url: https://api.patchproof.com
+    description: Production Server
+  - url: http://localhost:3001
+    description: Local Development Server
+
+# Reusable components for a clean and consistent spec
 components:
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
       in: header
       name: x-api-key
-    bearerAuth:
+      description: A static API key for authenticating client applications.
+    BearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: A JSON Web Token (JWT) for authenticating end-users.
+
+  schemas:
+    # --- Request Bodies ---
+    RequestVerificationBody:
+      type: object
+      properties:
+        identifier:
+          type: string
+          format: email
+          description: The user's email address to send the verification code to.
+          example: 'user@example.com'
+      required: [identifier]
+
+    SubmitVerificationBody:
+      type: object
+      properties:
+        identifier:
+          type: string
+          format: email
+          example: 'user@example.com'
+        code:
+          type: string
+          description: The 6-digit verification code sent to the user.
+          example: '123456'
+      required: [identifier, code]
+
+    RegisterPatchBody:
+      type: object
+      properties:
+        product:
+          type: object
+          properties:
+            uid_tag_id:
+              type: string
+              description: The unique identifier for the patch or tag.
+              example: 'patch-xyz-789'
+            name:
+              type: string
+              example: 'Limited Edition Jacket'
+          required: [uid_tag_id]
+        metadata:
+          type: object
+          properties:
+            notes:
+              type: string
+              example: 'Batch #42, manufactured on 2025-08-11.'
+        auth:
+          type: object
+          properties:
+            owner:
+              type: string
+              description: The initial owner's BSV address.
+              example: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'
+      required: [product, auth]
+
+    TransferOwnershipBody:
+      type: object
+      properties:
+        newOwnerAddress:
+          type: string
+          description: The BSV address of the new owner.
+          example: '12c6DSiU4Rq3P4ZxziKxzrL5LmMBrzjrJX'
+        currentOwnerSignature:
+          type: string
+          format: hex
+          description: A DER-encoded signature from the current owner.
+        currentOwnerPubKey:
+          type: string
+          format: hex
+          description: The compressed public key of the current owner.
+      required: [newOwnerAddress, currentOwnerSignature, currentOwnerPubKey]
+
+    # --- Response Objects ---
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: 'unauthorized'
+        message:
+          type: string
+          example: 'Invalid API key.'
+
+    PatchRecord:
+      type: object
+      properties:
+        # Define the full structure of a patch record here for reusability
+        uid_tag_id:
+          type: string
+        # ... other fields
+
+  responses:
+    Unauthorized:
+      description: Unauthorized. The API key is missing or invalid, or the JWT is missing/expired.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Forbidden. The caller is not the owner of the resource.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Not Found. The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+# API Paths
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: A simple endpoint to check if the API service is running.
+      tags: [Health]
+      responses:
+        '200':
+          description: Service is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: 'ok' }
+
+  /v1/auth/request-verification:
+    post:
+      summary: Request a Verification Code
+      description: Initiates the login process by sending a time-limited, single-use code to the user's identifier (email).
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestVerificationBody'
+      responses:
+        '200':
+          description: Verification code has been sent successfully.
+        '429':
+          description: Too many requests. The user has requested a code too recently.
+
+  /v1/auth/submit-verification:
+    post:
+      summary: Submit a Verification Code
+      description: Submits the 6-digit code to complete the login process and receive a JWT.
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitVerificationBody'
+      responses:
+        '200':
+          description: Verification successful. Returns a JWT.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  token: { type: string, format: jwt }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many failed attempts.
+
+  /v1/patches:
+    post:
+      summary: Register a New Patch
+      description: Creates a new, immutable registration record for a digital asset and anchors it to the blockchain.
+      tags: [Patches]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterPatchBody'
+      responses:
+        '202':
+          description: Accepted. The registration has been queued for processing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: 'Registration has been queued for processing.' }
+                  jobId: { type: string }
+                  txid: { type: string, description: "The future transaction ID of the record." }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: A patch with this uid_tag_id already exists.
+
+  /v1/patches/verify/{uid_tag_id}:
+    get:
+      summary: Verify a Patch
+      description: Retrieves the latest authentication record for a given patch to verify its authenticity and current owner.
+      tags: [Patches]
+      parameters:
+        - in: path
+          name: uid_tag_id
+          schema: { type: string }
+          required: true
+          description: The unique identifier of the patch to verify.
+      responses:
+        '200':
+          description: The verification result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatchRecord'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/patches/{txid}/transfer-ownership:
+    post:
+      summary: Transfer Patch Ownership
+      description: Creates a new transaction to transfer the ownership of a patch to a new address. Requires a signature from the current owner.
+      tags: [Patches]
+      security:
+        - BearerAuth: [] # Requires end-user authentication
+      parameters:
+        - in: path
+          name: txid
+          schema: { type: string, format: hex, description: "The TXID of the patch's current state." }
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferOwnershipBody'
+      responses:
+        '202':
+          description: Accepted. The transfer has been queued for processing.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: The patch state has changed since the request was initiated (Optimistic Lock Failure).
+
+# Tag grouping for the UI
+tags:
+  - name: Health
+    description: API health and readiness checks.
+  - name: Authentication
+    description: End-user authentication flow.
+  - name: Patches
+    description: Core operations for managing digital assets.

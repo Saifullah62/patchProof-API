@@ -1,0 +1,208 @@
+ {
+  "__inputs": [],
+  "__requires": [],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Key Performance Indicators (KPIs)",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Success Rate",
+      "description": "Percentage of SVD authentications that completed successfully out of all attempts started.\n\n(svd_complete_total / svd_begin_total) * 100",
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "sum(rate(svd_complete_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) / sum(rate(svd_begin_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) * 100",
+          "instant": true,
+          "legendFormat": "Success Rate"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "auto", "textMode": "auto" },
+      "pluginVersion": "10.4.1",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 95 }, { "color": "green", "value": 99 }] },
+          "unit": "percent"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Error Rate",
+      "description": "Percentage of SVD authentications that failed out of all attempts started.",
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 1 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "(sum(rate(svd_begin_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) - sum(rate(svd_complete_total{kid=~\"$kid\", sha=~\"$sha\"}[5m]))) / sum(rate(svd_begin_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) * 100",
+          "instant": true,
+          "legendFormat": "Error Rate"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "auto", "textMode": "auto" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 5 }] },
+          "unit": "percent"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Logins per Minute",
+      "description": "Rate of new SVD authentication flows being started.",
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "expr": "sum(rate(svd_begin_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) * 60",
+          "instant": true,
+          "legendFormat": "Logins/min"
+        }
+      ],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "orientation": "auto", "textMode": "auto" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "none" },
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "SVD Events (rate per second)",
+      "description": "Rate of successful authentications vs. new attempts.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 5 },
+      "targets": [
+        { "expr": "sum(rate(svd_begin_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (kid, sha)", "legendFormat": "begin {{kid}} {{sha}}" },
+        { "expr": "sum(rate(svd_complete_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (kid, sha)", "legendFormat": "complete {{kid}} {{sha}}" }
+      ],
+      "options": { "legend": { "show": true, "displayMode": "list" } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Failure Breakdown (rate per second)",
+      "description": "Rate of different failure types. A spike in 'invalid' could indicate a client-side bug or attack. A spike in 'expired' could indicate network latency or a misconfigured client.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 13 },
+      "targets": [
+        { "expr": "sum(rate(svd_expired_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (kid, sha)", "legendFormat": "expired {{kid}} {{sha}}" },
+        { "expr": "sum(rate(svd_replayed_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (kid, sha)", "legendFormat": "replayed {{kid}} {{sha}}" },
+        { "expr": "sum(rate(svd_malleable_reject_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (kid, sha)", "legendFormat": "malleable_reject {{kid}} {{sha}}" },
+        { "expr": "sum(rate(svd_invalid_total{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (kid, sha)", "legendFormat": "invalid {{kid}} {{sha}}" }
+      ],
+      "options": { "legend": { "show": true, "displayMode": "list" } },
+      "alerting": {
+        "alerts": [
+          {
+            "for": "5m",
+            "annotations": { "summary": "High rate of invalid SVD signatures for kid={{ $labels.kid }}" },
+            "labels": {},
+            "rules": [
+              {
+                "for": "5m",
+                "grafana_alert": {
+                  "condition": "A",
+                  "data": [
+                    {
+                      "datasourceUid": "Prometheus",
+                      "model": {
+                        "expr": "sum(rate(svd_invalid_total[5m])) by (kid) > 0.1",
+                        "refId": "A"
+                      },
+                      "refId": "A"
+                    }
+                  ],
+                  "title": "High Rate of Invalid SVD Signatures"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Challenge Age Quantiles (seconds)",
+      "description": "p50, p90, and p99 latency between when a challenge is issued and when it is successfully used. If p99 approaches the challenge expiry time, clients will experience failures.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 21 },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(svd_challenge_age_seconds_bucket{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (le,kid,sha))", "legendFormat": "p50 {{kid}} {{sha}}" },
+        { "expr": "histogram_quantile(0.9, sum(rate(svd_challenge_age_seconds_bucket{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (le,kid,sha))", "legendFormat": "p90 {{kid}} {{sha}}" },
+        { "expr": "histogram_quantile(0.99, sum(rate(svd_challenge_age_seconds_bucket{kid=~\"$kid\", sha=~\"$sha\"}[5m])) by (le,kid,sha))", "legendFormat": "p99 {{kid}} {{sha}}" }
+      ],
+      "options": { "legend": { "show": true, "displayMode": "list" } }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": ["svd", "auth"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "Prometheus" },
+        "includeAll": true,
+        "multi": true,
+        "name": "kid",
+        "options": [],
+        "query": "label_values(svd_begin_total, kid)",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": { "selected": false, "text": "All", "value": "$__all" },
+        "datasource": { "type": "prometheus", "uid": "Prometheus" },
+        "includeAll": true,
+        "multi": true,
+        "name": "sha",
+        "options": [],
+        "query": "label_values(svd_begin_total, sha)",
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "SVD Auth — Health",
+  "version": 2,
+  "weekStart": ""
+}

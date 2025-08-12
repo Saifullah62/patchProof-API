@@ -1,0 +1,145 @@
+// middleware/authRateLimiter.js
+// Hardened, production-ready rate limiters for authentication routes using a shared Redis store.
+
+const rateLimit = require('express-rate-limit');
+const { RedisStore } = require('rate-limit-redis');
+const { createClient } = require('redis');
+const logger = require('../logger');
+
+// --- Centralized Redis Client ---
+// It's crucial that all rate limiters share the same client and connection.
+let redisClient;
+let store = null;
+try {
+  const redisUrl = process.env.REDIS_URL || process.env.REDIS_ENDPOINT || 'redis://localhost:6379';
+  redisClient = createClient({ url: redisUrl });
+  if (!redisClient.isOpen) {
+    // Connect lazily; avoid blocking startup if Redis is down.
+    redisClient.connect().then(() => {
+      logger.info('[auth-rate-limit] Connected Redis client');
+    }).catch((e) => {
+      logger.error('[auth-rate-limit] Failed to connect Redis client for auth limiters.', e);
+    });
+  }
+  store = new RedisStore({
+    // node-redis v4: provide a sendCommand delegate
+    sendCommand: (...args) => redisClient.sendCommand(args),
+  });
+} catch (e) {
+  logger.error('[auth-rate-limit] Could not create Redis client. Falling back to in-memory store (NOT safe for production).', e);
+}
+
+if (!store) {
+  logger.warn('[auth-rate-limit] Redis store is not available. Using in-memory store. This will not protect across multiple instances.');
+}
+
+// --- Shared Configuration & Handlers ---
+
+const rateLimitExceededHandler = (req, res, next, options) => {
+  (req.log || logger).warn({
+    message: 'Authentication rate limit exceeded',
+    endpoint: req.originalUrl,
+    ip: req.ip,
+    identifier: req.body?.identifier,
+  });
+  res.status(options.statusCode).json({ error: { message: options.message } });
+};
+
+/**
+ * Normalizes the identifier and returns it as the key.
+ * - Trims whitespace and lowercases
+ * - Falls back to IP if missing
+ * @param {import('express').Request} req
+ * @returns {string}
+ */
+const getNormalizedKey = (req) => {
+  try {
+    // Prefer userId when present (SVD flows), else identifier for magic link flows
+    if (req.body?.userId && typeof req.body.userId === 'string') {
+      return req.body.userId.trim().toLowerCase();
+    }
+    if (req.body?.identifier && typeof req.body.identifier === 'string') {
+      return req.body.identifier.trim().toLowerCase();
+    }
+  } catch (_) {}
+  return req.ip;
+};
+
+// --- Limiters ---
+
+// Limits how often a code can be requested for a single identifier.
+const requestVerificationLimiter = rateLimit({
+  store,
+  windowMs: parseInt(process.env.AUTH_REQUEST_WINDOW_MS, 10) || 60 * 1000, // default 1 minute
+  max: parseInt(process.env.AUTH_REQUEST_MAX, 10) || 1,
+  message: 'Too many verification requests. Please wait a minute before trying again.',
+  keyGenerator: getNormalizedKey,
+  handler: rateLimitExceededHandler,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Limits how many FAILED attempts can be made to submit a code.
+const submitVerificationLimiter = rateLimit({
+  store,
+  windowMs: parseInt(process.env.AUTH_SUBMIT_WINDOW_MS, 10) || 10 * 60 * 1000, // default 10 minutes
+  max: parseInt(process.env.AUTH_SUBMIT_MAX, 10) || 5,
+  message: 'Too many failed verification attempts. Your account is temporarily locked. Please try again later.',
+  keyGenerator: getNormalizedKey,
+  handler: rateLimitExceededHandler,
+  standardHeaders: true,
+  legacyHeaders: false,
+  /**
+   * Skips counting successful requests. This is a crucial UX improvement.
+   * Controller should set res.locals.authSuccess = true on success.
+   */
+  skip: (req, res) => res?.locals?.authSuccess === true,
+});
+
+module.exports = {
+  requestVerificationLimiter,
+  submitVerificationLimiter,
+  // SVD: begin/complete authentication limiters
+  svdBeginLimiter: rateLimit({
+    store,
+    windowMs: parseInt(process.env.SVD_BEGIN_WINDOW_MS, 10) || 60 * 1000,
+    max: parseInt(process.env.SVD_BEGIN_MAX, 10) || 20,
+    message: 'Too many SVD begin requests. Please slow down.',
+    keyGenerator: getNormalizedKey,
+    handler: rateLimitExceededHandler,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+  // General-purpose public API limiter
+  publicApiLimiter: rateLimit({
+    store,
+    windowMs: parseInt(process.env.PUBLIC_API_WINDOW_MS, 10) || 60 * 1000,
+    max: parseInt(process.env.PUBLIC_API_MAX, 10) || 60,
+    message: 'Too many requests. Please slow down.',
+    keyGenerator: (req) => req.ip,
+    handler: rateLimitExceededHandler,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+  svdCompleteLimiter: rateLimit({
+    store,
+    windowMs: parseInt(process.env.SVD_COMPLETE_WINDOW_MS, 10) || 60 * 1000,
+    max: parseInt(process.env.SVD_COMPLETE_MAX, 10) || 30,
+    message: 'Too many SVD complete requests. Please slow down.',
+    keyGenerator: getNormalizedKey,
+    handler: rateLimitExceededHandler,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+  // Admin canary limiter (use IP-based key)
+  svdCanaryLimiter: rateLimit({
+    store,
+    windowMs: parseInt(process.env.SVD_CANARY_WINDOW_MS, 10) || 60 * 1000,
+    max: parseInt(process.env.SVD_CANARY_MAX, 10) || 30,
+    message: 'Too many requests to canary endpoint. Please slow down.',
+    keyGenerator: (req) => req.ip,
+    handler: rateLimitExceededHandler,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+};

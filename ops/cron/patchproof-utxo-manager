@@ -1,0 +1,9 @@
+# /etc/cron.d/patchproof-utxo-manager
+# Runs the UTXO manager every 15 minutes as the dedicated 'patchproof' user.
+# Logs all output to a dedicated log file for auditing and debugging.
+
+SHELL=/bin/bash
+USER=patchproof
+HOME=/opt/patchproof
+
+*/15 * * * * /usr/bin/node /opt/patchproof/scripts/utxo-manager.js >> /var/log/patchproof/utxo-manager.log 2>&1

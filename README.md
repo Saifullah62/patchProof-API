@@ -7,6 +7,22 @@ This API provides secure authentication, chain of custody, and on-chain anchorin
 
 ---
 
+## Documentation Index
+
+- Getting Started: [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
+- Configuration: [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
+- Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- API Reference: [docs/API.md](docs/API.md)
+- UTXO Maintenance: [docs/UTXO_MAINTENANCE.md](docs/UTXO_MAINTENANCE.md)
+- SVD (Passwordless) Auth: [docs/SVD_AUTH.md](docs/SVD_AUTH.md)
+- Operations Runbook: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Grafana Monitoring: [docs/GRAFANA.md](docs/GRAFANA.md)
+- Security: [docs/SECURITY.md](docs/SECURITY.md)
+- Testing: [docs/TESTING.md](docs/TESTING.md)
+ - Developer: see [Developer](#developer)
+
+---
+
 ## 🚀 Deployment Requirements
 
 ### 1. Environment Variables
@@ -22,32 +38,82 @@ For production, you must set the following environment variables. Do not hardcod
 - `API_KEY` – Required. The API key for accessing protected endpoints.
 - `JWT_SECRET` – Required. The secret used for signing JSON Web Tokens.
 
-#### On-Chain Anchoring (Funding Modes)
-Choose one of the two modes below for on-chain anchoring.
+#### On-Chain Anchoring (KMS-based Signing)
+All transaction signing is delegated to an external KMS. The application never handles raw private keys.
 
-**A. Dynamic SmartLedger Wallet Mode (Recommended for Production):**
-- `SMARTLEDGER_API_BASE_URL` – e.g. `https://smartledger.dev`
-- `SMARTLEDGER_API_KEY` – Your SmartLedger API key.
-- `FUNDING_ADDRESS` – BSV address to fund anchoring transactions.
-- `FUNDING_WIF` – Corresponding private key (WIF) for signing.
-
-**B. Static/Manual Mode (Single UTXO, for dev/test):**
-- `MERCHANT_API_URL` – Merchant API endpoint for BSV broadcast.
-- `UTXO_TXID`, `UTXO_OUTPUT_INDEX`, `UTXO_SATOSHIS`, `UTXO_SCRIPT_HEX`, `UTXO_PRIVKEY_WIF`, `UTXO_CHANGE_ADDRESS`
+- `KMS_SIGN_URL` – HTTPS endpoint for your signing service used by `services/kmsSigner.js`.
+- `KMS_API_KEY` – Optional bearer key for authenticating to the KMS.
+- UTXO ingestion and pool management are handled internally. For manual seeding, use `scripts/addUtxo.js` with a KMS `--keyId` (public key identifier); no WIFs are accepted by scripts.
 
 #### Other
 - `PORT` – Port to run the API (default: 3001).
 - `NODE_ENV` - Set to `production` for live environments.
+ 
+#### External KMS (Signing)
+- `KMS_SIGN_URL` – HTTPS endpoint for external KMS signing. The service never handles raw private keys.
+- `KMS_API_KEY` – Optional bearer key for the KMS endpoint.
+- Optional tuning: `KMS_SIGN_RETRY_ATTEMPTS`, `KMS_SIGN_RETRY_DELAY_MS`.
+
+#### WhatsOnChain (WOC) Client
+- `WOC_API_KEY` – Optional. API key header used by `clients/wocClient.js` when present.
+- `WOC_TIMEOUT_MS` – Optional. HTTP timeout in milliseconds for WOC requests (default: 8000).
+- `WOC_RETRIES` – Optional. Number of retry attempts on retryable failures (5xx or network), default: 2.
+- `WOC_NETWORK` – `main` | `test` network selector (already listed under configuration docs).
+
+Initialization:
+- The WOC client is initialized at server startup in `app.js` (`wocClient.initialize()`).
+- Standalone scripts that use the client (e.g., `scripts/check-health.js`, `scripts/addUtxo.js`) explicitly call `wocClient.initialize()` before use.
+
+---
+
+## DigitalOcean Droplet Deployment (systemd + Nginx)
+
+If you deploy on a DigitalOcean Droplet, use a root-owned env file and a systemd unit for a hardened setup:
+
+- Secrets in `/etc/patchproof/patchproof.env` (root:root, chmod 600)
+- App managed by systemd (`ops/systemd/patchproof.service`)
+- Optional Nginx reverse proxy with TLS (`ops/nginx/patchproof.conf`)
+- One-command deploy/rollback scripts in `ops/`
+
+Start here: `docs/DEPLOYMENT_DO.md`
+
+Quick commands (on the droplet):
+
+```bash
+sudo cp /opt/patchproof/ops/systemd/patchproof.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable patchproof && sudo systemctl start patchproof
+sudo journalctl -u patchproof -f
+```
+
+Deploy with:
+
+```bash
+sudo -E bash /opt/patchproof/ops/deploy.sh
+```
+
+Rollback with (previous commit by default, or pass a git ref):
+
+```bash
+sudo -E bash /opt/patchproof/ops/rollback.sh
+sudo -E bash /opt/patchproof/ops/rollback.sh HEAD~2
+sudo -E bash /opt/patchproof/ops/rollback.sh <commit-sha>
+```
 
 ---
 
 ## Security & Operational Best Practices
-- **Secrets:** Use a cloud secrets manager or HSM in production. Never hardcode secrets in source code or config files.
-- **Key Rotation:** With dynamic funding, rotate `FUNDING_WIF` and funding addresses regularly.
+- **Secrets:** Use a cloud secrets manager or HSM in production. On DigitalOcean Droplets, store secrets in a root-owned env file at `/etc/patchproof/patchproof.env` (chmod 600) and load via systemd `EnvironmentFile`. Never hardcode secrets in source code or config files.
+- **Key Rotation:** Rotate KMS keys per policy. Because the app never receives private keys, rotation is performed within the KMS. Update `keyIdentifier` usage in ops as needed.
 - **JWT Expiry:** JWTs are short-lived (default 10 minutes). Adjust expiry as needed.
 - **CORS:** Restrict allowed origins to trusted domains only.
-- **Rate Limiting:** Adjust thresholds based on expected traffic and threat model.
+  - **Rate Limiting:** Adjust thresholds based on expected traffic and threat model.
+    - Use a shared Redis (`REDIS_URL`) for distributed enforcement across instances.
+    - Auth limiter envs: `AUTH_REQUEST_WINDOW_MS`, `AUTH_REQUEST_MAX`, `AUTH_SUBMIT_WINDOW_MS`, `AUTH_SUBMIT_MAX`.
 - **Monitoring:** Configure Winston to forward logs to a central aggregation service.
+  - Import the SVD Grafana dashboard from `grafana/svd-dashboard.json` and set the Prometheus datasource to "Prometheus".
+  - Key KPIs: Success Rate (%), Error Rate (%), Logins/min, Failure Breakdown, Challenge Age p50/p90/p99.
+
+- **API Key Hardening:** Protected routes use constant-time comparison (`crypto.timingSafeEqual`). In production, the service exits on startup if `API_KEY` is missing.
 
 ---
 
@@ -61,7 +127,7 @@ The default is 100 requests per 15 minutes per IP. Adjust for your needs in `app
 
 ---
 
-## 🚀 CI/CD & Automated Testing
+## CI/CD & Automated Testing
 
 This project is set up for continuous integration and deployment via GitHub Actions.
 
@@ -69,9 +135,25 @@ This project is set up for continuous integration and deployment via GitHub Acti
 - **Tests:** Runs `npm test` (Jest + Supertest) on every push.
 - **MongoDB Readiness:** Tests can use `mongodb-memory-server` when `MONGODB_URI` is not set.
 
+### GitHub Actions Secrets (required)
+To avoid context/secret lint warnings and ensure tests run, configure these repository secrets in GitHub:
+
+- `API_KEY`
+- `JWT_SECRET`
+- `MASTER_SECRET`
+- `KMS_SIGN_URL`
+- `KMS_API_KEY`
+- `ISSUER_KEY_IDENTIFIER`
+- `UTXO_FUNDING_KEY_IDENTIFIER`
+- `UTXO_FUNDING_ADDRESS`
+- `UTXO_CHANGE_ADDRESS` (optional but referenced)
+- `WOC_API_KEY` (optional; recommended if CI hits WOC)
+
+These are consumed by `.github/workflows/ci.yml` and validated at runtime.
+
 ---
 
-## 🗄️ Database Schema (MongoDB + Mongoose)
+## Database Schema (MongoDB + Mongoose)
 
 - This project uses MongoDB with Mongoose models. No SQL/Knex migrations are required.
 - **Models**:
@@ -90,15 +172,26 @@ This project is set up for continuous integration and deployment via GitHub Acti
 node app.js
 ```
 
-📖 API Documentation
+API Documentation
 OpenAPI/Swagger docs are available at /docs when the server is running.
 
 See the openapi.yaml file for full endpoint specifications.
 
-🔐 Advanced Cryptographic Utilities
-This project uses a production-grade cryptographic toolkit in keyUtils.js for secure and auditable operations, including deterministic key derivation, digital signatures, and Merkle batching. See the source file for detailed documentation.
+### Helpful npm scripts
 
-🚀 Deployment Checklist
+```sh
+npm run db:ensure-indexes   # Ensure MongoDB indexes in production
+npm run db:profile          # Toggle MongoDB profiler and inspect slow queries
+npm run utxo:manage         # Run UTXO manager (sync/sweep/split) locally
+```
+
+Cryptography & Signing
+All hashing, Merkle batching, and signing are handled by production services:
+- `services/blockchainService.js` (v2) prepares transactions, hashing helpers, and broadcasting.
+- `services/kmsSigner.js` performs all signing via an external KMS (no WIFs in codebase).
+- Scripts that perform Merkle batching include local helpers where needed (e.g., `scripts/batchAnchor.js`).
+
+Deployment Checklist
 This is a high-level checklist for deploying the API to a production environment.
 
 [ ] Secrets Management: All secrets (e.g., MONGODB_URI, JWT_SECRET, MASTER_SECRET) must be populated in a secure secrets manager.
@@ -113,7 +206,7 @@ This is a high-level checklist for deploying the API to a production environment
 
 [ ] On-Chain Funding: Ensure your chosen funding method is configured with a monitored, funded wallet.
 
-## 🔑 API Key Authentication
+## API Key Authentication
 
 Write endpoints are protected with an API key. Include your API key in the `x-api-key` header when calling protected routes:
 
@@ -132,7 +225,8 @@ curl -X POST \
   -H 'x-api-key: YOUR_API_KEY' \
   -d '{
     "product": { "uid_tag_id": "NFC_UID_001" },
-    "metadata": { "notes": "Test" }
+    "metadata": { "notes": "Test" },
+    "auth": { "owner": "1YourInitialOwnerAddress" }
   }'
 ```
 
@@ -140,7 +234,72 @@ Notes:
 - The API key value is read from the `API_KEY` environment variable (via `secrets.js`).
 - In test environment (`NODE_ENV=test`), API key checks are bypassed to enable automated testing.
 
-## 🔒 JWT Authentication
+### Example: Rich registration payload (strict schema)
+
+The registration endpoint enforces a strict schema. Allowed fields:
+- product: uid_tag_id (required), category, sku, serial_number, material
+- metadata: notes, image (URL), patch_location
+- auth: owner (required)
+
+Example (curl):
+
+```sh
+curl -X POST \
+  http://localhost:3001/v1/patches \
+  -H 'Content-Type: application/json' \
+  -H 'x-api-key: YOUR_API_KEY' \
+  -d '{
+    "product": {
+      "uid_tag_id": "NFC_UID_011",
+      "category": "jersey",
+      "sku": "JERSEY-2025-007",
+      "serial_number": "307100",
+      "material": "Polyester + woven patch"
+    },
+    "metadata": {
+      "notes": "Limited edition player-authenticated jersey.",
+      "image": "https://vault.smartledger.solutions/assets/jersey007-front.png",
+      "patch_location": "Lower right hem"
+    },
+    "auth": {
+      "owner": "1YourInitialOwnerAddress"
+    }
+  }'
+```
+
+Example (PowerShell):
+
+```powershell
+$env:API_KEY = 'YOUR_API_KEY'
+
+$body = @'
+{
+  "product": {
+    "uid_tag_id": "NFC_UID_011",
+    "category": "jersey",
+    "sku": "JERSEY-2025-007",
+    "serial_number": "307100",
+    "material": "Polyester + woven patch"
+  },
+  "metadata": {
+    "notes": "Limited edition player-authenticated jersey.",
+    "image": "https://vault.smartledger.solutions/assets/jersey007-front.png",
+    "patch_location": "Lower right hem"
+  },
+  "auth": {
+    "owner": "1YourInitialOwnerAddress"
+  }
+}
+'@
+
+Invoke-RestMethod -Method POST `
+  -Uri 'http://localhost:3001/v1/patches' `
+  -ContentType 'application/json' `
+  -Headers @{ 'x-api-key' = $env:API_KEY } `
+  -Body $body
+```
+
+## JWT Authentication
 
 Certain sensitive routes additionally require a valid Bearer JWT in the `Authorization` header.
 
@@ -169,7 +328,7 @@ Required on:
 
 JWT is signed with `JWT_SECRET`. In test environment, JWT checks are bypassed.
 
-## 🔏 Ownership Transfer Authorization (Signature Verification)
+## Ownership Transfer Authorization (Signature Verification)
 
 For a transfer to proceed, the server verifies that the request is authorized by the CURRENT OWNER on record.
 
@@ -193,7 +352,7 @@ The server:
 2) Computes SHA-256 of the canonical message and verifies `currentOwnerSignature` against `currentOwnerPubKey`.
 3) Only if both checks pass will the transfer broadcast and DB state update proceed.
 
-## 🪙 UTXO Funding Strategy
+## UTXO Funding Strategy
 
 Current setup uses a single static UTXO defined in `utxoConfig.js`. This is simple for development but becomes a bottleneck in production (only one TX can be built at a time).
 
@@ -205,7 +364,7 @@ Recommended next step: implement a dynamic UTXO management service that can:
 
 Until that is implemented, ensure the static UTXO remains sufficiently funded and is not double-spent by concurrent operations.
 
-### 🧹 UTXO Pool Maintenance (Orphaned Lock Reaper)
+### UTXO Pool Maintenance (Orphaned Lock Reaper)
 
 If the server crashes or is terminated abruptly, a UTXO may be left in a `locked` state, preventing it from being used. A reaper script is provided to clean up these orphaned locks.
 
@@ -241,7 +400,40 @@ $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 1
 Register-ScheduledTask -Action $action -Trigger $trigger -TaskName "PatchProof UTXO Reaper" -Description "Unlocks orphaned UTXOs for the PatchProof API."
 ```
 
-### ⛓️ Batch Anchoring
+### Change Address Sweep (KMS-based)
+
+Consolidate dust from the configured change address back to the funding address using the production-grade sweep CLI. The script uses a distributed lock and never handles raw private keys; signing is centralized in `services/blockchainService.sweepAddress()` using the env funding key.
+
+Usage:
+
+```sh
+# Dry run (no broadcast)
+node scripts/sweep-change.js \
+  --changeAddress 1YourChangeAddress \
+  --changeKeyId keyIdentifier-for-change \
+  --destinationAddress 1YourFundingAddress \
+  --dryRun
+
+# Execute sweep
+node scripts/sweep-change.js \
+  --changeAddress 1YourChangeAddress \
+  --changeKeyId keyIdentifier-for-change \
+  --destinationAddress 1YourFundingAddress
+```
+
+Notes:
+- Requires Redis-backed `lockManager` initialized by the app; the script acquires `sweep-address-<changeAddress>` for 5 minutes to prevent concurrent runs.
+- Signing is delegated to the external KMS via `services/kmsSigner.js` + `services/blockchainService.sweepAddress()`; no env WIFs are used.
+- `--changeKeyId` is the KMS key identifier for the change address (observability/key attribution). Scripts do not accept WIFs.
+- All signing is delegated to an external KMS. `blockchainService.sweepAddress()` builds the transaction, computes input sighashes, requests signatures from the KMS, applies signatures, and broadcasts.
+- Broadcasting uses WOC with retries; see `clients/wocClient.js`.
+
+KMS signer contract (summary):
+- Input to KMS: `[{ keyIdentifier, sighash }]`
+- Output from KMS: `[{ signatureHex, pubKeyHex }]` aligned to inputs
+- Configure signer endpoint via `KMS_SIGN_URL` (+ optional `KMS_API_KEY`). See `services/kmsSigner.js` and `docs/UTXO_MAINTENANCE.md`.
+
+### Batch Anchoring
 
 For high-volume systems, anchoring each record in a separate transaction can be inefficient and costly. This API provides a batch anchoring endpoint that groups multiple records into a single on-chain transaction.
 
@@ -290,7 +482,7 @@ Example when nothing to anchor:
 }
 ```
 
-## 🧰 Enhanced Error Logging
+## Enhanced Error Logging
 
 The centralized error handler logs structured context for faster debugging while redacting sensitive data:
 - Redacts `Authorization` header and `x-api-key`.
@@ -298,6 +490,136 @@ The centralized error handler logs structured context for faster debugging while
 - Captures request id, method, URL, headers, and sanitized body.
 
 Forward logs to your aggregation provider (e.g., Datadog/CloudWatch) via Winston transports for production.
+
+## UTXO Pool Maintenance (Health, Sweep, Split)
+
+PatchProof includes proactive UTXO pool management with confirmation-aware syncing, dust consolidation (sweep), and pool replenishment via splitting. You can run it via API or as a cron/scheduled job.
+
+### Endpoints
+
+- GET `/v1/admin/utxo-health` (x-api-key)
+  - Returns database pool stats by status (unconfirmed/available/locked/spent), counts controlled by the funding key, and on-chain stats (with lightweight WhatsOnChain caching).
+- POST `/v1/admin/utxo-maintain` (x-api-key)
+  - Body: `{ "action": "auto" | "sync" | "sweep" | "split" }` (default `auto`).
+  - Triggers maintenance steps on demand, returning per-step results.
+
+Examples (PowerShell):
+
+```powershell
+curl -Method GET -Uri http://localhost:3001/v1/admin/utxo-health -Headers @{ 'x-api-key' = 'YOUR_API_KEY' }
+
+curl -Method POST -Uri http://localhost:3001/v1/admin/utxo-maintain -Headers @{ 'x-api-key' = 'YOUR_API_KEY' } -Body '{"action":"auto"}' -ContentType 'application/json'
+```
+
+### Environment Knobs
+
+- `UTXO_FUNDING_KEY_IDENTIFIER` (required): Stable identifier for your KMS-managed funding key (e.g., public key hex or KID).
+- `KMS_SIGN_URL` (required): HTTPS endpoint for the external KMS signer.
+- `KMS_API_KEY` (required): API key for the KMS signer.
+- `ISSUER_KEY_IDENTIFIER` (required): Issuer key identifier used for patch signing.
+- `WOC_NETWORK` (default `main`): WhatsOnChain network.
+- `UTXO_MIN_CONFIRMATIONS` (default `0`): Minimum confirmations to mark UTXOs as `available` (otherwise `unconfirmed`).
+- `MIN_UTXO_COUNT` or `UTXO_MIN_POOL` (default `10`): Minimum healthy pool size. Split runs when below target.
+- `UTXO_SPLIT_SIZE_SATS` (default `5000`): Target size of split outputs.
+- `UTXO_FEE_BUFFER` (default `2000`): Conservative fee buffer used during split.
+- `DUST_THRESHOLD_SATS` (default `2000`): UTXOs below this are treated as dust.
+- `DUST_SWEEP_LIMIT` (default `20`): Sweep triggers when dust count exceeds this value.
+- `HEALTH_WOC_CACHE_MS` (default `5000`): In-memory cache TTL for WhatsOnChain calls used by utxo-health.
+- `AUTO_MAINTAIN_ON_HEALTH` (set to `1` to enable): Automatically schedules sweep/split when GET `/v1/admin/utxo-health` detects pool below target or excessive dust.
+
+### Run via Script (Cron/Scheduler)
+
+The same logic is exposed as a script for cron-friendly execution and uses the centralized `utxoManagerService`:
+
+```sh
+node scripts/utxo-manager.js
+```
+
+#### Seeding a UTXO (no WIF required)
+Use the secure CLI to add a single funding UTXO, associated to your KMS-managed key via key identifier:
+
+```sh
+node scripts/addUtxo.js \
+  --txid 0123ab...cdef \
+  --vout 1 \
+  --satoshis 150000 \
+  --keyId <public-key-hex-or-identifier> \
+  --script <scriptPubKeyHex>
+```
+- To mark all other available UTXOs as spent, add `--exclusive --confirm`.
+- The CLI validates the UTXO is unspent on-chain with timeouts/retries and will abort if the UTXO is already spent or cannot be verified.
+
+Linux/macOS (cron) – run every 10 minutes:
+
+```cron
+*/10 * * * * /usr/bin/env node /path/to/project/scripts/utxo-manager.js >> /var/log/utxo-manager.log 2>&1
+```
+
+Windows (Task Scheduler) – PowerShell snippet:
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "node" -Argument "C:\\path\\to\\project\\scripts\\utxo-manager.js"
+$trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 10) -Once -At (Get-Date).Date
+Register-ScheduledTask -Action $action -Trigger $trigger -TaskName "PatchProof UTXO Manager" -Description "Maintains the PatchProof UTXO pool."
+```
+
+Notes
+- Health endpoint uses lightweight caching to reduce WOC rate consumption.
+- Setting `AUTO_MAINTAIN_ON_HEALTH=1` allows passive maintenance whenever operators or monitors query `/v1/admin/utxo-health`.
+- For production, consider staggering cron and monitoring intervals to smooth on-chain calls.
+
+## 🛠️ Operations Scripts (Deploy & Rollback)
+
+Two helper scripts live under `ops/` for quick and safe operations on your Droplet:
+
+- `ops/deploy.sh`
+  - Pulls latest code (main), installs deps, writes `DEPLOY_SHA` into `/etc/patchproof/patchproof.env`, restarts `patchproof` service.
+  - Performs `/health` check and optional `/api/svd/canary` if `API_KEY` is present in environment.
+  - Usage:
+    ```bash
+    sudo chmod +x /opt/patchproof/ops/deploy.sh
+    export API_KEY=YOUR_ADMIN_API_KEY  # optional for canary
+    sudo -E bash /opt/patchproof/ops/deploy.sh
+    ```
+
+- `ops/rollback.sh [git-ref]`
+  - Checks out a previous commit (default `HEAD^`) or a provided ref, installs deps for that version, updates `DEPLOY_SHA`, restarts the service, runs `/health`, and (optionally) `/api/svd/canary`.
+  - Usage:
+    ```bash
+    sudo chmod +x /opt/patchproof/ops/rollback.sh
+    export API_KEY=YOUR_ADMIN_API_KEY  # optional for canary
+    sudo -E bash /opt/patchproof/ops/rollback.sh         # previous commit
+    sudo -E bash /opt/patchproof/ops/rollback.sh HEAD~2   # two commits back
+    sudo -E bash /opt/patchproof/ops/rollback.sh <sha>    # specific commit
+    ```
+
+Health & Canary endpoints:
+- `GET /health` – basic readiness probe
+- `GET /api/svd/canary` – admin-gated SVD self-test/metrics; include `x-api-key`
+
+## ✅ E2E Testing (Production-Like, No Mocks)
+
+For a full end-to-end validation of the KMS-first, mainnet integration (no mocks), see `docs/E2E_TESTING.md`.
+
+Highlights:
+- Runs against a live server (`BASE_URL`), `NODE_ENV=production`, real Mongo/Redis/WOC/KMS.
+- Exercises SVD register/begin/complete with replay prevention and `Cache-Control: no-store`.
+- Checks `/metrics` compatibility (Prometheus exposition, optional API key).
+- Safe-by-default guard: requires `E2E_MAINNET=1` to run.
+
+Run:
+```powershell
+$env:E2E_MAINNET = "1"
+$env:BASE_URL = "http://localhost:3001"
+npm install
+npm run test:e2e
+```
+
+---
+
+## Developer
+
+- Bryan Daugherty — https://github.com/Saifullah62/ — @BWDaugherty on X
 
 🤝 Contact & Support
 For support or questions, contact SmartLedger or your system integrator.

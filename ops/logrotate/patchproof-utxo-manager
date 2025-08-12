@@ -1,0 +1,14 @@
+/var/log/patchproof/utxo-manager.log {
+  daily
+  rotate 14
+  compress
+  missingok
+  notifempty
+  create 0640 patchproof patchproof
+  dateext
+  dateformat -%Y%m%d
+  sharedscripts
+  postrotate
+    systemctl reload rsyslog >/dev/null 2>&1 || true
+  endscript
+}

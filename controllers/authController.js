@@ -4,11 +4,11 @@ const AuthService = require('../services/authService');
 const logger = require('../logger');
 
 const requestSchema = Joi.object({
-  identifier: Joi.string().min(3).max(320).required(),
+  identifier: Joi.string().trim().lowercase().min(3).max(320).required(),
 });
 
 const submitSchema = Joi.object({
-  identifier: Joi.string().min(3).max(320).required(),
+  identifier: Joi.string().trim().lowercase().min(3).max(320).required(),
   code: Joi.string().length(6).pattern(/^\d+$/).required(),
 });
 
@@ -44,12 +44,14 @@ class AuthController {
       const result = await AuthService.submitVerification(value.identifier, value.code);
       
       if (result.success) {
+        // Signal to rate limiter that this request succeeded so it should not be counted
+        res.locals.authSuccess = true;
         (req.log || logger).info({ message: 'Verification successful, JWT issued', identifier: value.identifier });
         return res.status(200).json({ success: true, token: result.token });
       }
       
       (req.log || logger).warn({ message: 'Verification failed', identifier: value.identifier, reason: result.reason });
-      return res.status(401).json({ success: false, message: result.message, reason: result.reason, attemptsRemaining: result.attemptsRemaining });
+      return res.status(401).json({ success: false, message: result.message, reason: result.reason });
     } catch (err) {
       return next(err);
     }

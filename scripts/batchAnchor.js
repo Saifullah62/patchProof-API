@@ -1,62 +1,169 @@
+#!/usr/bin/env node
+
 // scripts/batchAnchor.js
-require('dotenv').config(); // Load environment variables from .env file
-const mongoose = require('mongoose');
+// A robust, atomic, and idempotent script for batch-anchoring records.
+require('dotenv').config();
+
+const yargs = require('yargs/yargs');
+const { hideBin } = require('yargs/helpers');
 const { initDb, closeDb } = require('../config/db');
-const { computeSha256, computeMerkleRoot, computeMerklePath } = require('../keyUtils');
+const { constructAndBroadcastTx } = require('../services/blockchainService');
 const AuthenticationRecord = require('../models/AuthenticationRecord');
-const { constructAndBroadcastTx } = require('../services/blockchainService'); // Using modern service
+const logger = require('../logger');
+const lockManager = require('../services/lockManager');
+
+// --- Local cryptographic helpers (migrated from deprecated keyUtils) ---
+const crypto = require('crypto');
+
+function computeSha256(data) {
+  const json = typeof data === 'string' ? data : JSON.stringify(data);
+  return crypto.createHash('sha256').update(Buffer.from(json)).digest();
+}
+
+function computeMerkleRoot(hashes) {
+  if (!Array.isArray(hashes) || hashes.length === 0) return Buffer.alloc(32);
+  let level = hashes.map((h) => (Buffer.isBuffer(h) ? h : Buffer.from(h, 'hex')));
+  while (level.length > 1) {
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = level[i + 1] || level[i];
+      next.push(crypto.createHash('sha256').update(Buffer.concat([left, right])).digest());
+    }
+    level = next;
+  }
+  return level[0];
+}
+
+function computeMerklePath(index, hashes) {
+  const path = [];
+  let idx = index;
+  let level = hashes.map((h) => (Buffer.isBuffer(h) ? h : Buffer.from(h, 'hex')));
+  while (level.length > 1) {
+    const isRight = idx % 2 === 1;
+    const pairIndex = isRight ? idx - 1 : idx + 1;
+    const sibling = level[pairIndex] || level[idx];
+    path.push(sibling);
+    // build next level
+    const next = [];
+    for (let i = 0; i < level.length; i += 2) {
+      const left = level[i];
+      const right = level[i + 1] || level[i];
+      next.push(crypto.createHash('sha256').update(Buffer.concat([left, right])).digest());
+    }
+    level = next;
+    idx = Math.floor(idx / 2);
+  }
+  return path;
+}
 
 async function batchAnchorRecords() {
-  console.log('Starting batch anchoring process...');
+  // Initialize services first
+  await lockManager.initialize();
   await initDb();
 
-  try {
-    // 1. Find records that haven't been anchored yet.
-    // This assumes a field like `anchorTxid` is null for unanchored records.
-    const recordsToAnchor = await AuthenticationRecord.find({ 'record_data.auth.anchorTxid': null }).limit(100);
+  const lockName = 'batch-anchor-process';
+  // Attempt to acquire the lock with a 5-minute TTL to be safe.
+  const lockToken = await lockManager.acquireLock(lockName, 5 * 60 * 1000);
 
-    if (!recordsToAnchor.length) {
-      console.log('No new records to anchor.');
-      return;
+  if (!lockToken) {
+    logger.info('Batch anchor process is already running (lock not acquired). Exiting.');
+    await closeDb();
+    return;
+  }
+
+  logger.info({ message: 'Lock acquired, starting batch anchoring process.', lockName, lockToken: 'REDACTED' });
+
+  let claimedRecordIds = [];
+
+  try {
+    const argv = yargs(hideBin(process.argv))
+      .option('limit', {
+        describe: 'The maximum number of records to anchor in this batch',
+        type: 'number',
+        default: 100,
+      })
+      .strict(false)
+      .help(false)
+      .parse();
+
+    // 1. Find candidates and claim them to prevent reprocessing by other runs
+    const recordsToClaim = await AuthenticationRecord.find({ status: 'pending' })
+      .limit(argv.limit)
+      .select('_id')
+      .lean();
+
+    claimedRecordIds = recordsToClaim.map((r) => r._id);
+
+    if (claimedRecordIds.length === 0) {
+      logger.info('No new records to anchor.');
+      return; // graceful
     }
-    console.log(`Found ${recordsToAnchor.length} records to anchor.`);
+
+    await AuthenticationRecord.updateMany(
+      { _id: { $in: claimedRecordIds } },
+      { $set: { status: 'anchoring' } }
+    );
+    logger.info(`Claimed ${claimedRecordIds.length} records for anchoring.`);
+
+    const recordsToAnchor = await AuthenticationRecord.find({ _id: { $in: claimedRecordIds } });
 
     // 2. Compute hashes and the Merkle root
-    const hashes = recordsToAnchor.map(r => computeSha256(r.record_data));
+    const hashes = recordsToAnchor.map((r) => computeSha256(r.record_data));
     const merkleRoot = computeMerkleRoot(hashes);
 
     // 3. Broadcast the Merkle root to the blockchain
     const opReturnData = [Buffer.from('PatchProofBatch'), merkleRoot];
     const broadcastResult = await constructAndBroadcastTx(opReturnData, 'BatchAnchor');
-    
+
     if (!broadcastResult.success) {
       throw new Error(`Failed to broadcast Merkle root: ${broadcastResult.error || 'Unknown error'}`);
     }
     const anchorTxid = broadcastResult.txid;
-    console.log(`Successfully broadcasted Merkle root in transaction: ${anchorTxid}`);
+    logger.info(`Successfully broadcasted Merkle root in transaction: ${anchorTxid}`);
 
-    // 4. Update each record with its Merkle proof and the anchor TXID
-    for (let i = 0; i < recordsToAnchor.length; i++) {
-      const record = recordsToAnchor[i];
+    // 4. Use a single bulkWrite operation to update all records efficiently.
+    const bulkOps = recordsToAnchor.map((record, i) => {
       const path = computeMerklePath(i, [...hashes]);
-      
-      record.record_data.auth.merkleRoot = merkleRoot.toString('hex');
-      record.record_data.auth.merklePath = path.map(buf => buf.toString('hex'));
-      record.record_data.auth.anchorTxid = anchorTxid;
-      
-      // Mark the document as modified since we are changing a nested object
-      record.markModified('record_data');
-      await record.save();
-    }
+      return {
+        updateOne: {
+          filter: { _id: record._id },
+          update: {
+            $set: {
+              'record_data.auth.merkleRoot': merkleRoot.toString('hex'),
+              'record_data.auth.merklePath': path.map((buf) => buf.toString('hex')),
+              'record_data.auth.anchorTxid': anchorTxid,
+              status: 'confirmed',
+            },
+          },
+        },
+      };
+    });
 
-    console.log(`Successfully updated ${recordsToAnchor.length} records with anchor proof.`);
-
+    await AuthenticationRecord.bulkWrite(bulkOps);
+    logger.info(`Successfully updated ${recordsToAnchor.length} records with anchor proof.`);
   } catch (error) {
-    console.error('An error occurred during the batch anchoring process:', error);
-    process.exitCode = 1;
+    logger.error('An error occurred during the batch anchoring process:', error);
+    // If an error occurred after claiming, revert the status back to 'pending' for the next run.
+    if (claimedRecordIds.length > 0) {
+      try {
+        logger.info('Reverting status of claimed records back to "pending".');
+        await AuthenticationRecord.updateMany(
+          { _id: { $in: claimedRecordIds }, status: 'anchoring' },
+          { $set: { status: 'pending' } }
+        );
+      } catch (revertErr) {
+        logger.error('Failed to revert claimed records to pending:', revertErr);
+      }
+    }
+    process.exitCode = 1; // Signal failure to scheduler
   } finally {
+    try {
+      await lockManager.releaseLock(lockName, lockToken);
+      logger.info('Lock released.');
+    } catch (_) {}
     await closeDb();
-    console.log('Batch anchoring process finished.');
+    logger.info('Batch anchoring process finished.');
   }
 }
 

@@ -55,3 +55,29 @@ nohup.out
 # package-lock.json
 # yarn.lock
 # pnpm-lock.yaml
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+
+# Env and secrets
+.env
+.env.*.local
+*.pem
+*.key
+
+# Logs
+logs/
+*.log
+server.log
+
+# Coverage / test artifacts
+coverage/
+reports/
+junit.xml
+
+# Build artifacts
+dist/
+build/

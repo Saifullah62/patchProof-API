@@ -1,0 +1,49 @@
+# /etc/systemd/system/patchproof.service
+# Production-grade systemd service file for the PatchProof API, managed by PM2.
+
+[Unit]
+Description=PatchProof API Service
+Documentation=https://github.com/Saifullah62/patchProof_PROD
+After=network.target
+
+[Service]
+# --- Process Management with PM2 ---
+# Use pm2-runtime for seamless integration with systemd.
+# Replace 'app.js' with your ecosystem file if you use one (e.g., 'ecosystem.config.js').
+ExecStart=/usr/bin/pm2-runtime start app.js --name patchproof-api
+ExecReload=/usr/bin/pm2 reload patchproof-api
+ExecStop=/usr/bin/pm2 stop patchproof-api
+
+# --- Security: Run as a dedicated, non-root user ---
+# You must create this user first: sudo useradd --system --no-create-home patchproof
+User=patchproof
+Group=patchproof
+
+# --- Environment & Working Directory ---
+WorkingDirectory=/opt/patchproof
+EnvironmentFile=/etc/patchproof/patchproof.env
+
+# --- Reliability ---
+Restart=always
+RestartSec=5 # Restart service after 5 seconds if it crashes
+
+# --- CRITICAL Security Hardening ---
+# Prevent the process and its children from gaining new privileges.
+NoNewPrivileges=true
+# Use a private /tmp and /var/tmp directory, invisible to other processes.
+PrivateTmp=true
+# Use a private /dev and prevent access to physical devices.
+PrivateDevices=true
+# Make the host file system read-only except for specified paths.
+ProtectSystem=full
+# Make /home, /root, and /run/user directories inaccessible.
+ProtectHome=true
+# Prevent tampering with kernel variables.
+ProtectKernelTunables=true
+# Prevent loading of new kernel modules.
+ProtectKernelModules=true
+# Prevent the service from accessing other control groups.
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
