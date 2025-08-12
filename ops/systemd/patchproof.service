@@ -16,8 +16,8 @@ ExecStop=/usr/bin/pm2 stop patchproof-api
 
 # --- Security: Run as a dedicated, non-root user ---
 # You must create this user first: sudo useradd --system --no-create-home patchproof
-User=u25-33a7zt7gneny
-Group=u25-33a7zt7gneny
+User=patchproof
+Group=patchproof
 
 # --- Environment & Working Directory ---
 WorkingDirectory=/opt/patchproof
