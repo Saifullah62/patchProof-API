@@ -185,6 +185,22 @@ async function startServer() {
     app.use(requestIdMiddleware);
     app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
 
+    // --- Minimal internal signer route (local/private only) ---
+    // Mount only when explicitly enabled and signer WIF is present on this host.
+    if (String(process.env.INTERNAL_SIGNER_ENABLED || '').toLowerCase() === '1') {
+      try {
+        if (!process.env.SIGNER_PRIV_WIF) {
+          throw new Error('SIGNER_PRIV_WIF missing while INTERNAL_SIGNER_ENABLED=1');
+        }
+        const internalSignerRouter = require('./routes/internalSigner.route');
+        app.use('/internal/signer', internalSignerRouter);
+        logger.info('[internal-signer] Mounted at /internal/signer (ensure NOT publicly exposed)');
+      } catch (e) {
+        logger.error('[internal-signer] failed to mount', e);
+        if (process.env.NODE_ENV === 'production') throw e;
+      }
+    }
+
     // --- SVD passwordless auth routes ---
     app.use('/api', require('./routes/svdAuth'));
     app.use('/api', require('./routes/svdKid'));

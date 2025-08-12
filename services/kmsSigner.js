@@ -5,7 +5,8 @@ const logger = require('../logger');
 
 class KmsSigner {
   constructor() {
-    this.axiosInstance = null;
+    this.axiosTx = null;   // for transaction signing: POST /sign
+    this.axiosSvd = null;  // for SVD ops: POST /svd/derive-secret
     this.isReady = false;
   }
 
@@ -13,32 +14,33 @@ class KmsSigner {
    * Initializes the KmsSigner. Must be called at application startup.
    */
   initialize() {
-    const kmsUrl = process.env.KMS_SIGN_URL;
     const apiKey = process.env.KMS_API_KEY;
+    const txUrl = process.env.KMS_TX_SIGN_URL || process.env.KMS_SIGN_URL || '';
+    const svdUrl = process.env.KMS_SVD_URL || process.env.KMS_SIGN_URL || '';
 
-    if (!kmsUrl) {
-      logger.warn('[KmsSigner] KMS_SIGN_URL is not configured. Signing will be disabled.');
+    if (!txUrl && !svdUrl) {
+      logger.warn('[KmsSigner] No KMS URLs configured (KMS_TX_SIGN_URL/KMS_SVD_URL/KMS_SIGN_URL). Signing/derivation disabled.');
       this.isReady = false;
       return;
     }
-    if (kmsUrl === 'mock') {
-      logger.warn('[KmsSigner] KMS signer is in mock mode. It will refuse to sign.');
-      this.isReady = true; // Ready, but will throw on use.
-      this.axiosInstance = axios.create({ baseURL: kmsUrl });
-      return;
+
+    const timeout = parseInt(process.env.KMS_SIGN_TIMEOUT_MS, 10) || 15000;
+    const commonHeaders = {
+      'Content-Type': 'application/json',
+      ...(apiKey && { 'Authorization': `Bearer ${apiKey}` }),
+    };
+
+    // TX signer axios (can be 'mock' in CI/dev)
+    if (txUrl) {
+      this.axiosTx = axios.create({ baseURL: txUrl, timeout, headers: commonHeaders });
+    }
+    // SVD axios (should point to real KMS in prod)
+    if (svdUrl) {
+      this.axiosSvd = axios.create({ baseURL: svdUrl, timeout, headers: commonHeaders });
     }
 
-    this.axiosInstance = axios.create({
-      baseURL: kmsUrl,
-      timeout: parseInt(process.env.KMS_SIGN_TIMEOUT_MS, 10) || 15000,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey && { 'Authorization': `Bearer ${apiKey}` }),
-      },
-    });
-
     this.isReady = true;
-    logger.info(`[KmsSigner] Initialized for KMS endpoint: ${kmsUrl}`);
+    logger.info(`[KmsSigner] Initialized. TX_URL=${txUrl || 'N/A'} SVD_URL=${svdUrl || 'N/A'}`);
   }
 
   /**
@@ -52,7 +54,8 @@ class KmsSigner {
     if (!this.isReady) {
       throw new Error('KMS signer is not configured or ready. Cannot sign transaction.');
     }
-    const baseURL = this.axiosInstance?.defaults?.baseURL || '';
+    const baseURL = this.axiosTx?.defaults?.baseURL || '';
+    if (!this.axiosTx) throw new Error('TX signer endpoint not configured');
     if (baseURL.includes('mock')) {
       throw new Error('KMS signer is in mock mode. Refusing to sign.');
     }
@@ -63,7 +66,7 @@ class KmsSigner {
     let lastError;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const response = await this.axiosInstance.post('/sign', body);
+        const response = await this.axiosTx.post('/sign', body);
         if (response.data && Array.isArray(response.data.signatures)) {
           return response.data.signatures;
         }
@@ -94,7 +97,8 @@ class KmsSigner {
     if (!this.isReady) {
       throw new Error('KMS signer is not configured or ready. Cannot derive SVD secret.');
     }
-    const baseURL = this.axiosInstance?.defaults?.baseURL || '';
+    if (!this.axiosSvd) throw new Error('SVD endpoint not configured');
+    const baseURL = this.axiosSvd?.defaults?.baseURL || '';
     if (baseURL.includes('mock')) {
       throw new Error('KMS signer is in mock mode. Refusing to derive SVD secret.');
     }
@@ -105,7 +109,7 @@ class KmsSigner {
     let lastError;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const res = await this.axiosInstance.post('/svd/derive-secret', payload);
+        const res = await this.axiosSvd.post('/svd/derive-secret', payload);
         if (res.data && typeof res.data.sharedSecretHex === 'string') return res.data;
         throw new Error('Invalid response from KMS svd/derive-secret');
       } catch (err) {
