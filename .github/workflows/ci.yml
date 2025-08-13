@@ -189,10 +189,10 @@ jobs:
       - name: Deploy to Droplet via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST2 }}
-          username: ${{ secrets.SSH_USERNAME2 }}
-          key: ${{ secrets.SSH_PRIVATE_KEY2 }}
-          port: ${{ secrets.SSH_PORT2 }}
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
           script: |
             echo "Executing deployment script on host..."
             # The deploy script handles pulling code, installing dependencies,

@@ -1,4 +1,15 @@
-require('dotenv').config(); // This must be the first line
+// Load .env in dev; tolerate absence in production
+try {
+  require('dotenv').config();
+} catch (e) {
+  if (e && (e.code === 'MODULE_NOT_FOUND' || /dotenv/.test(String(e)))) {
+    // eslint-disable-next-line no-console
+    console.warn('[startup] dotenv not found; assuming environment is provided by systemd/PM2');
+  } else {
+    throw e;
+  }
+}
+
 // app.js (Finalized Production Architecture)
 const express = require('express');
 const helmet = require('helmet');

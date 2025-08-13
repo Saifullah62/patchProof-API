@@ -33,7 +33,6 @@
     "utxo:manage": "node scripts/utxo-manager.js",
     "db:profile": "node scripts/profile-db.js",
     "db:ensure-indexes": "node scripts/db/ensure-indexes.js",
-    "queues:dashboard": "node scripts/queues/dashboard.js",
     "jobs:report-failed": "node scripts/jobs/report-failed.js",
     "fees:refresh": "node scripts/fees/refresh-fee.js",
     "jobs:check-failed": "node scripts/jobs/check-failed.js",
@@ -67,7 +66,6 @@
     "winston": "^3.13.0",
     "yargs": "^17.7.2",
     "yamljs": "^0.3.0",
-    "bull-board": "^5.16.0",
     "puppeteer": "^22.15.0"
   },
   "devDependencies": {
