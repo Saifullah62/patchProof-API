@@ -76,7 +76,9 @@ const worker = new Worker(
       );
       if (!res.success) {
         if (pendingId) {
-          try { await dbService.markTransferFailed(pendingId, res.error || 'broadcast failed'); } catch (_) {}
+          try { await dbService.markTransferFailed(pendingId, res.error || 'broadcast failed'); }
+          // eslint-disable-next-line no-empty
+          catch (_) {}
         }
         throw new Error(`Broadcast failed: ${res.error}`);
       }
@@ -97,7 +99,9 @@ const worker = new Worker(
     const res = await BlockchainService.constructAndBroadcastTx(opReturnData, purpose || 'Registration');
     if (!res.success) {
       if (pendingId) {
-        try { await dbService.markRegistrationFailed(pendingId, res.error || 'broadcast failed'); } catch (_) {}
+        try { await dbService.markRegistrationFailed(pendingId, res.error || 'broadcast failed'); }
+        // eslint-disable-next-line no-empty
+        catch (_) {}
       }
       throw new Error(`Broadcast failed: ${res.error}`);
     }

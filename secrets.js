@@ -5,7 +5,9 @@
 const logger = require('./logger');
 
 // Load .env for local development (no-op in production if not present)
-try { require('dotenv').config(); } catch (_) {}
+try { require('dotenv').config(); }
+// eslint-disable-next-line no-empty
+catch (_) {}
 
 const secretsCache = {};
 
@@ -32,7 +34,6 @@ const SECRET_MAP = {
   // Optional configuration
   CORS_ALLOWED_ORIGINS: { required: false },
   WOC_NETWORK: { required: false },
-  MERCHANT_API_URL: { required: false },
   SMTP_HOST: { required: false },
   SMTP_PORT: { required: false },
   SMTP_USER: { required: false },
@@ -62,7 +63,7 @@ function getSecret(name) {
     return secretsCache[name];
   }
   let value = fromEnv(name);
-  if (value == null && process.env.NODE_ENV === 'production') {
+  if ((value === null || value === undefined) && process.env.NODE_ENV === 'production') {
     // Optional: attempt external manager in production
     try { value = fromExternalManager(name); } catch (e) { logger.warn(`[Secrets] external manager error for ${name}: ${e.message}`); }
   }

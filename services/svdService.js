@@ -95,7 +95,9 @@ class SvdService {
     const Mhex = M.toString('hex');
     await challengeCache.set(userId, Mhex, this.CHALLENGE_TTL_SEC);
     const svd = await SvdRegistry.findOne({ userId: new mongoose.Types.ObjectId(userId) });
-    try { metrics.inc('begin', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); } catch (_) {}
+    try { metrics.inc('begin', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
+    // eslint-disable-next-line no-empty
+    catch (_) {}
     return { M: Mhex, pmcHex: svd?.pmcHex || null };
   }
 
@@ -108,19 +110,27 @@ class SvdService {
     const Mbuf = Buffer.from(Mhex, 'hex');
     const mDigestHex = sha256Hex(Mbuf);
     const firstSeen = await replayCacheRedis.addIfNotExists(mDigestHex);
-    if (!firstSeen) { try { metrics.inc('replayed', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); } catch (_) {} throw new SvdReplayError(); }
+    if (!firstSeen) { try { metrics.inc('replayed', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
+    // eslint-disable-next-line no-empty
+    catch (_) {} throw new SvdReplayError(); }
 
     const issuedM = await challengeCache.get(userId);
-    if (!issuedM) { try { metrics.inc('expired', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); } catch (_) {} throw new SvdExpiredError('No active challenge'); }
+    if (!issuedM) { try { metrics.inc('expired', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
+    // eslint-disable-next-line no-empty
+    catch (_) {} throw new SvdExpiredError('No active challenge'); }
     if (issuedM !== Mhex) throw new SvdBadChallengeError('Challenge mismatch');
 
     const V2C = deriveV2FromPMC(reg.pmcHex, Mbuf);
     const sig = bsv.crypto.Signature.fromDER(Buffer.from(signatureHex, 'hex'));
     const msgHash = sha256(Mbuf);
     const n = bsv.crypto.Point.getN();
-    if (sig.s.gt(n.shrn(1))) { try { metrics.inc('malleable_reject', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); } catch (_) {} throw new SvdInvalidSignatureError('Non-canonical signature'); }
+    if (sig.s.gt(n.shrn(1))) { try { metrics.inc('malleable_reject', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
+    // eslint-disable-next-line no-empty
+    catch (_) {} throw new SvdInvalidSignatureError('Non-canonical signature'); }
     const ok = bsv.crypto.ECDSA.verify(msgHash, sig, V2C);
-    if (!ok) { try { metrics.inc('invalid', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); } catch (_) {} throw new SvdInvalidSignatureError('SVD signature invalid'); }
+    if (!ok) { try { metrics.inc('invalid', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
+    // eslint-disable-next-line no-empty
+    catch (_) {} throw new SvdInvalidSignatureError('SVD signature invalid'); }
 
     let S;
     if (this.useKmsForSvd) {
@@ -138,10 +148,18 @@ class SvdService {
 
     const token = this._issueJwtForUser(userId, S, { mDigestHex, kid: this.ACTIVE_KID || 'unknown' });
     // Single-use: invalidate the challenge immediately upon success
-    try { await challengeCache.del(userId); } catch (_) {}
-    try { metrics.inc('complete', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); } catch (_) {}
-    try { logger.info({ message: 'svd complete', tags: { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA } }); } catch (_) {}
-    try { msgHash.fill(0); } catch (_) {}
+    try { await challengeCache.del(userId); }
+    // eslint-disable-next-line no-empty
+    catch (_) {}
+    try { metrics.inc('complete', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
+    // eslint-disable-next-line no-empty
+    catch (_) {}
+    try { logger.info({ message: 'svd complete', tags: { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA } }); }
+    // eslint-disable-next-line no-empty
+    catch (_) {}
+    try { msgHash.fill(0); }
+    // eslint-disable-next-line no-empty
+    catch (_) {}
     return { token };
   }
 
@@ -177,7 +195,7 @@ function toBuffer(x) {
     if (hexish.test(x) && x.length % 2 === 0) return Buffer.from(x, 'hex');
     return Buffer.from(x, 'utf8');
   }
-  if (x == null) return Buffer.alloc(0);
+  if (x === null || x === undefined) return Buffer.alloc(0);
   return Buffer.from(String(x), 'utf8');
 }
 

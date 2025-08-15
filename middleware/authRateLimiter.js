@@ -61,7 +61,9 @@ const getNormalizedKey = (req) => {
     if (req.body?.identifier && typeof req.body.identifier === 'string') {
       return req.body.identifier.trim().toLowerCase();
     }
-  } catch (_) {}
+  }
+  // eslint-disable-next-line no-empty
+  catch (_) {}
   return req.ip;
 };
 

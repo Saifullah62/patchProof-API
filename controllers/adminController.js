@@ -93,7 +93,7 @@ class AdminController {
       });
 
       // Use configured public funding address (no WIF in server)
-      let fundingAddress = (process.env.FUNDING_ADDRESS || '').trim() || null;
+      const fundingAddress = (process.env.FUNDING_ADDRESS || '').trim() || null;
 
       let chain = null;
       if (fundingAddress) {

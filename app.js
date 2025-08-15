@@ -52,13 +52,30 @@ async function startServer() {
   try {
     // Global process-level safety nets
     process.on('unhandledRejection', (reason, promise) => {
-      try { logger.error('Unhandled Rejection at:', { promise, reason }); } catch (_) {}
+      try { logger.error('Unhandled Rejection at:', { promise, reason }); }
+      // eslint-disable-next-line no-empty
+      catch (_) {}
     });
     process.on('uncaughtException', (err) => {
-      try { logger.error('Uncaught Exception:', err); } catch (_) {}
+      try { logger.error('Uncaught Exception:', err); }
+      // eslint-disable-next-line no-empty
+      catch (_) {}
     });
     // Validate required secrets before initializing dependencies
     try { validateRequiredSecrets(); } catch (e) { logger.error('[Secrets] validation error', e); throw e; }
+    // Track readiness of subsystems to expose richer /ready diagnostics
+    const readyFlags = {
+      redisLock: false,
+      replayCache: false,
+      challengeCache: false,
+      kms: false,
+      svd: false,
+      woc: false,
+      bsvSelfTest: false,
+      auth: false,
+      jobs: false,
+      utxo: false,
+    };
     await initDb();
     // Initialize Settings-backed config cache (non-blocking, periodic refresh)
     try { configService.initialize(60_000); logger.info('[config] ConfigService initialized'); } catch (e) { logger.warn('[config] ConfigService init failed:', e.message); }
@@ -66,12 +83,14 @@ async function startServer() {
     // Initialize distributed lock manager (Redis) before any lock usage
     try {
       await lockManager.initialize();
+      readyFlags.redisLock = true;
     } catch (err) {
       logger.warn('[LockManager] initialize() failed; locking will be disabled until Redis is available');
     }
     // Initialize Redis-backed replay cache (hard dependency in prod)
     try {
       await svdReplayCacheRedis.initialize();
+      readyFlags.replayCache = true;
       logger.info('[svd] replay cache initialized');
     } catch (err) {
       logger.error('[svd] replay cache initialization failed', err);
@@ -80,6 +99,7 @@ async function startServer() {
     // Initialize Redis-backed SVD challenge cache (hard dependency in prod)
     try {
       await svdChallengeCacheRedis.initialize();
+      readyFlags.challengeCache = true;
       logger.info('[svd] challenge cache initialized');
     } catch (err) {
       logger.error('[svd] challenge cache initialization failed', err);
@@ -88,6 +108,7 @@ async function startServer() {
     // Initialize KMS signer early so SVD can detect readiness
     try {
       kmsSigner.initialize();
+      readyFlags.kms = true;
       logger.info('[kms] KmsSigner initialized');
     } catch (err) {
       logger.error('[kms] KmsSigner initialization failed', err);
@@ -96,6 +117,7 @@ async function startServer() {
     // Initialize SvdService (loads secrets, checks readiness)
     try {
       svdService.initialize();
+      readyFlags.svd = true;
       logger.info('[svd] service initialized');
     } catch (err) {
       logger.error('[svd] service initialization failed', err);
@@ -105,6 +127,7 @@ async function startServer() {
     // Initialize WhatsOnChain client
     try {
       wocClient.initialize();
+      readyFlags.woc = true;
       logger.info('[woc] client initialized');
     } catch (err) {
       logger.error('[woc] client initialization failed', err);
@@ -114,6 +137,7 @@ async function startServer() {
     // Run BSV self-test early to detect library drift
     try {
       runBsvSelfTest();
+      readyFlags.bsvSelfTest = true;
       logger.info('[svd] bsv self-test passed');
     } catch (err) {
       logger.error('[svd] bsv self-test failed:', err);
@@ -123,6 +147,7 @@ async function startServer() {
     // Initialize AuthService email transport explicitly
     try {
       await authService.initialize();
+      readyFlags.auth = true;
       logger.info('[auth] AuthService initialized');
     } catch (err) {
       logger.error('[auth] AuthService initialization failed', err);
@@ -131,6 +156,7 @@ async function startServer() {
     // Initialize background job service
     try {
       await jobService.initialize();
+      readyFlags.jobs = true;
       logger.info('[jobs] JobService initialized');
     } catch (err) {
       logger.error('[jobs] JobService initialization failed', err);
@@ -139,6 +165,7 @@ async function startServer() {
     // Initialize UTXO Manager orchestrator (validates funding config)
     try {
       utxoManagerService.initialize();
+      readyFlags.utxo = true;
       logger.info('[utxo] UtxoManagerService initialized');
     } catch (err) {
       logger.error('[utxo] UtxoManagerService initialization failed', err);
@@ -325,7 +352,9 @@ async function startServer() {
       } catch (err) {
         return res.status(500).json({ error: { message: 'Failed to generate PDF', details: err?.message || String(err) } });
       } finally {
-        try { if (browser) await browser.close(); } catch (_) {}
+        try { if (browser) await browser.close(); }
+        // eslint-disable-next-line no-empty
+        catch (_) {}
       }
     });
     
@@ -353,19 +382,25 @@ async function startServer() {
       app.get('/metrics', metricsHandler);
     }
     app.get('/ready', (req, res) => {
-        const isDbConnected = mongoose.connection.readyState === 1;
-        if (isDbConnected) {
-            res.json({ status: 'ready', database: 'connected' });
-        } else {
-            res.status(503).json({ status: 'not_ready', database: 'disconnected' });
-        }
+      const isDbConnected = mongoose.connection.readyState === 1;
+      const payload = {
+        status: isDbConnected ? 'ready' : 'not_ready',
+        nodeEnv: process.env.NODE_ENV || 'development',
+        database: isDbConnected ? 'connected' : 'disconnected',
+        services: { ...readyFlags },
+      };
+      if (isDbConnected) {
+        res.json(payload);
+      } else {
+        res.status(503).json(payload);
+      }
     });
 
     // 404 handler
     app.use((req, res) => res.status(404).json({ error: { message: 'Not Found' } }));
 
     // Error handler with contextual logging (redacted)
-    app.use((err, req, res, next) => {
+    app.use((err, req, res, _next) => {
       const log = req.log || logger;
       const headers = { ...req.headers };
       if (headers.authorization) headers.authorization = '[REDACTED]';
@@ -413,9 +448,15 @@ async function startServer() {
       const gracefulShutdown = async () => {
         logger.info('Shutting down gracefully...');
         server.close(async () => {
-          try { await jobService.close(); } catch (_) {}
-          try { await svdReplayCacheRedis.close(); } catch (_) {}
-          try { await svdChallengeCacheRedis.close(); } catch (_) {}
+          try { await jobService.close(); }
+          // eslint-disable-next-line no-empty
+          catch (_) {}
+          try { await svdReplayCacheRedis.close(); }
+          // eslint-disable-next-line no-empty
+          catch (_) {}
+          try { await svdChallengeCacheRedis.close(); }
+          // eslint-disable-next-line no-empty
+          catch (_) {}
           await closeDb();
           logger.info('Server closed.');
         });

@@ -79,7 +79,7 @@ async function main() {
       const unspent = await wocClient.getUnspentOutputs(addr, 0);
       const match = (Array.isArray(unspent) ? unspent : []).find(u => {
         const txh = u.tx_hash || u.txid;
-        const v = u.tx_pos != null ? u.tx_pos : u.vout;
+        const v = (u.tx_pos !== null && u.tx_pos !== undefined) ? u.tx_pos : u.vout;
         return String(txh) === String(utxoData.txid) && Number(v) === Number(utxoData.vout);
       });
       if (!match) {
@@ -90,7 +90,7 @@ async function main() {
           process.exit(4);
         }
       } else {
-        const value = match.value != null ? match.value : match.satoshis;
+        const value = (match.value !== null && match.value !== undefined) ? match.value : match.satoshis;
         if (Number(value) !== Number(utxoData.satoshis)) {
           logger.warn(`On-chain value (${value}) does not match provided satoshis (${utxoData.satoshis}).`);
           if (!argv.force) {
@@ -103,7 +103,9 @@ async function main() {
         if (!utxoData.scriptPubKey && addr) {
           try {
             utxoData.scriptPubKey = bsv.Script.buildPublicKeyHashOut(addr).toHex();
-          } catch (_) { /* ignore */ }
+          }
+          // eslint-disable-next-line no-empty
+          catch (_) { /* ignore */ }
         }
         verified = true;
       }
@@ -140,6 +142,8 @@ async function main() {
 
 main().catch(async (err) => {
   logger.error('Failed to add UTXO:', err);
-  try { await closeDb(); } catch (_) {}
+  try { await closeDb(); }
+  // eslint-disable-next-line no-empty
+  catch (_) {}
   process.exit(1);
 });

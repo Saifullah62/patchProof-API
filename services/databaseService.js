@@ -14,7 +14,9 @@ async function withTransaction(operations) {
     await session.commitTransaction();
     return result;
   } catch (error) {
-    try { await session.abortTransaction(); } catch (_) {}
+    try { await session.abortTransaction(); }
+    // eslint-disable-next-line no-empty
+    catch (_) {}
     if (String(error.message).includes('Transaction numbers are only allowed on a replica set')) {
       logger.warn('[DB] Transactions not supported; falling back to non-atomic operations. Not safe for production.');
       return operations(null);
@@ -88,13 +90,6 @@ class DatabaseService {
 
       return { idempotent: false, txid };
     });
-  }
-
-  async markRegistrationFailed(pendingId, reason) {
-    await AuthenticationRecord.updateOne(
-      { _id: pendingId, status: { $in: ['pending', 'failed'] } },
-      { $set: { status: 'failed', failure_reason: String(reason || 'unknown error') } }
-    ).exec();
   }
 
   async getPendingRegistrationById(id) {

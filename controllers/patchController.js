@@ -114,7 +114,9 @@ class PatchController {
       // If async jobs enabled, enqueue and return 202
       if (jobService.isEnabled()) {
         const jobId = await jobService.addBroadcastJob({ pendingId: pending._id || pending.id, record, uid_tag_id, initialOwner, purpose: 'Registration' });
-        try { await dbService.attachJobToPending(pending._id || pending.id, jobId); } catch (_) {}
+        try { await dbService.attachJobToPending(pending._id || pending.id, jobId); }
+        // eslint-disable-next-line no-empty
+        catch (_) {}
         if (req.log) req.log.info({ message: 'Queued registration broadcast job', jobId, uid_tag_id, pendingId: pending._id || pending.id });
         return res.status(202).json({ message: 'Queued for broadcast', jobId, uid_tag_id, pendingId: pending._id || pending.id });
       }
@@ -244,7 +246,9 @@ class PatchController {
 
       if (jobService.isEnabled()) {
         const jobId = await jobService.addTransferJob({ pendingId: pending._id || pending.id, uid_tag_id, currentTxid, newOwnerAddress, record: newRecordData });
-        try { await dbService.attachJobToPendingTransfer(pending._id || pending.id, jobId); } catch (_) {}
+        try { await dbService.attachJobToPendingTransfer(pending._id || pending.id, jobId); }
+        // eslint-disable-next-line no-empty
+        catch (_) {}
         if (req.log) req.log.info({ message: 'Queued transfer broadcast job', jobId, uid_tag_id, pendingId: pending._id || pending.id });
         return res.status(202).json({ message: 'Queued for broadcast', jobId, uid_tag_id, pendingId: pending._id || pending.id });
       }

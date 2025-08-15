@@ -14,7 +14,12 @@ jest.mock('../../models/Settings', () => ({
 }));
 
 jest.mock('../../services/lockManager', () => ({
-  withLockHeartbeat: async (_key, fn) => fn(),
+  withLockHeartbeat: jest.fn(async (_key, _ttl, fn) => ({ ok: true, result: await fn() })),
+}));
+
+jest.mock('../../models/Utxo', () => ({
+  countDocuments: jest.fn(() => 0),
+  findOneAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })),
 }));
 
 describe('utxoManagerService', () => {
@@ -30,6 +35,6 @@ describe('utxoManagerService', () => {
   test('splitIfNeeded handles empty state gracefully', async () => {
     // Provide minimal stubs if service expects certain properties
     utxoManagerService._state = utxoManagerService._state || {};
-    await expect(utxoManagerService.splitIfNeeded()).resolves.not.toThrow();
+    await expect(utxoManagerService.splitIfNeeded()).resolves.toBeDefined();
   });
 });

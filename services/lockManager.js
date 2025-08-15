@@ -45,7 +45,9 @@ class LockManager {
     const intervalMs = Math.max(2000, Math.min(20000, Math.floor(ttlMs / 3)));
     let timer = null;
     const beat = async () => {
-      try { await this.extendLock(lockName, token, ttlMs); } catch (_) {}
+      try { await this.extendLock(lockName, token, ttlMs); }
+      // eslint-disable-next-line no-empty
+      catch (_) {}
     };
     try {
       timer = setInterval(beat, intervalMs);
@@ -55,7 +57,9 @@ class LockManager {
       return { ok: false, error: e };
     } finally {
       if (timer) clearInterval(timer);
-      try { await this.releaseLock(lockName, token); } catch (_) {}
+      try { await this.releaseLock(lockName, token); }
+      // eslint-disable-next-line no-empty
+      catch (_) {}
     }
   }
   /**
@@ -164,7 +168,9 @@ class LockManager {
     } catch (e) {
       return { ok: false, error: e };
     } finally {
-      try { await this.releaseLock(lockName, token); } catch (_) {}
+      try { await this.releaseLock(lockName, token); }
+      // eslint-disable-next-line no-empty
+      catch (_) {}
     }
   }
 }

@@ -105,7 +105,9 @@ class AuthService {
       { upsert: true, new: true }
     );
     await this._sendVerificationCodeEmail(identifier, code);
-    try { metrics.inc('pp_challenges_issued', { method: 'email' }); } catch (_) {}
+    try { metrics.inc('pp_challenges_issued', { method: 'email' }); } 
+    // eslint-disable-next-line no-empty
+    catch (_) {}
     return {
       success: true,
       message: 'Verification code sent.',
@@ -131,7 +133,9 @@ class AuthService {
       iss: 'patchproof:auth-service',
     };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
-    try { metrics.inc('pp_jwt_success', { method: 'email' }); } catch (_) {}
+    try { metrics.inc('pp_jwt_success', { method: 'email' }); } 
+    // eslint-disable-next-line no-empty
+    catch (_) {}
     return { success: true, token };
   }
 }

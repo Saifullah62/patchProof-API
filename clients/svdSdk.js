@@ -8,7 +8,7 @@ const crypto = require('crypto');
 function sha256(buf) { return crypto.createHash('sha256').update(buf).digest(); }
 
 // Derive P2C = PMC + H(M) mod n (client-side private scalar for this challenge)
-function deriveP2cFromPmcWIF(pmcPrivWIF, Mhex) {
+function _deriveP2cFromPmcWIF(pmcPrivWIF, Mhex) {
   const PMC = bsv.PrivateKey.fromWIF(pmcPrivWIF);
   const n = bsv.crypto.Point.getN();
   const h = new bsv.crypto.BN(sha256(Buffer.from(Mhex, 'hex')));
@@ -127,7 +127,9 @@ class SvdSdk {
       } catch (e) {
         lastErr = e;
         // Attempt kid refresh on failures to adapt to rotation (best-effort)
-        try { await this.getKid({ signal }); } catch (_) {}
+        try { await this.getKid({ signal }); }
+        // eslint-disable-next-line no-empty
+        catch (_) {}
         if (e instanceof SvdError && (e.code === 'SVD_EXPIRED' || e.code === 'SVD_REPLAYED') && attempt < this.maxAttempts) {
           if (e.code === 'SVD_REPLAYED') {
             const delay = 50 + Math.floor(Math.random() * 200);

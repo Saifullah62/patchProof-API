@@ -9,6 +9,7 @@ const logger = require('../../logger');
 const { initDb, closeDb } = require('../../config/db');
 
 (async () => {
+  let hadError = false;
   try {
     await initDb();
     const modelsDir = path.join(__dirname, '..', '..', 'models');
@@ -50,9 +51,10 @@ const { initDb, closeDb } = require('../../config/db');
     logger.info('[DB] Index ensure completed successfully.');
   } catch (err) {
     logger.error('[DB] Index ensure script failed.', err);
+    hadError = true;
   } finally {
     // Ensure the database connection is always closed.
     await closeDb();
-    process.exit(err ? 1 : 0);
+    process.exit(hadError ? 1 : 0);
   }
 })();

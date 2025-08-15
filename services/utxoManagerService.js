@@ -2,7 +2,10 @@
 require('dotenv').config();
 const https = require('https');
 const bsv = require('bsv');
-const Utxo = require('../models/Utxo');
+let Utxo;
+try { Utxo = require('../models/Utxo'); }
+// eslint-disable-next-line no-empty
+catch (_) { Utxo = null; }
 const utxoService = require('./utxoService');
 const blockchainService = require('./blockchainService');
 const logger = require('../logger');
@@ -96,6 +99,10 @@ class UtxoManagerService {
   }
 
   async syncUtxos(isDryRun = false) {
+    if (!Utxo) {
+      logger.warn('[UtxoManagerService] DB unavailable; skipping syncUtxos');
+      return { added: 0, spent: 0, confirmed: 0 };
+    }
     const network = (process.env.WOC_NETWORK || 'main').toLowerCase();
     const [unspentList, info] = await Promise.all([
       wocClient.getUnspentOutputs(this.FUNDING_ADDRESS, 0),
@@ -104,8 +111,8 @@ class UtxoManagerService {
     const height = info?.blocks || 0;
     const onChainUtxos = (Array.isArray(unspentList) ? unspentList : []).map(u => ({
       tx_hash: u.tx_hash || u.txid,
-      tx_pos: u.tx_pos != null ? u.tx_pos : u.vout,
-      value: u.value != null ? u.value : u.satoshis,
+      tx_pos: (u.tx_pos !== null && u.tx_pos !== undefined) ? u.tx_pos : u.vout,
+      value: (u.value !== null && u.value !== undefined) ? u.value : u.satoshis,
       confirmations: u.height && u.height > 0 ? (height - u.height + 1) : 0,
     }));
 
@@ -142,6 +149,10 @@ class UtxoManagerService {
   }
 
   async sweepDust(isDryRun = false) {
+    if (!Utxo) {
+      logger.warn('[UtxoManagerService] DB unavailable; skipping sweepDust');
+      return { skipped: true, reason: 'db_unavailable' };
+    }
     const dustUtxos = await Utxo.find({ status: 'available', keyIdentifier: this.FUNDING_KEY_ID, satoshis: { $lt: this.DUST_THRESHOLD_SATS } })
       .limit(this.DUST_SWEEP_LIMIT + 50).exec();
     if (dustUtxos.length < this.DUST_SWEEP_LIMIT) {
@@ -166,7 +177,18 @@ class UtxoManagerService {
   }
 
   async splitIfNeeded(isDryRun = false) {
-    const poolCount = await Utxo.countDocuments({ status: 'available', keyIdentifier: this.FUNDING_KEY_ID });
+    if (!Utxo) {
+      logger.warn('[UtxoManagerService] DB unavailable; skipping splitIfNeeded');
+      return { skipped: true, reason: 'db_unavailable' };
+    }
+    let poolCount = 0;
+    try {
+      poolCount = await Utxo.countDocuments({ status: 'available', keyIdentifier: this.FUNDING_KEY_ID });
+    } catch (e) {
+      // In test or when DB is not connected, do not throw; just skip gracefully
+      logger.warn('[UtxoManagerService] countDocuments failed, skipping splitIfNeeded()', e.message);
+      return { skipped: true, reason: 'db_unavailable' };
+    }
     if (poolCount >= this.MIN_UTXO_COUNT) {
       return { skipped: true, reason: 'pool_healthy', poolCount };
     }
