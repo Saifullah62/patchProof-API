@@ -17,7 +17,7 @@ function request(path) {
       res.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8');
         let json;
-        try { json = JSON.parse(body); } catch (_) {}
+        try { json = JSON.parse(body); } catch (err) { json = null; }
         resolve({
           ok: true,
           statusCode: res.statusCode,

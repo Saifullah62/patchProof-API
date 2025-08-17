@@ -2,6 +2,7 @@
 require('dotenv').config();
 const { Worker, QueueEvents, Queue } = require('bullmq');
 const IORedis = require('ioredis');
+const ClaimIntent = require('../models/ClaimIntent');
 const BlockchainService = require('../services/blockchainService');
 const dbService = require('../services/databaseService');
 
@@ -51,6 +52,8 @@ queueEvents.on('failed', async ({ jobId, failedReason }) => {
     // Revert the DB record back to pending and requeue
     try { await dbService.revertPending(pendingId); } catch (e) { console.error('[broadcastWorker] revertPending failed:', e); return; }
 
+    // If associated with a POS claim intent, keep it approved (do not flip to failed here); requeue instead.
+
     const newData = { ...data, recoverCount: recoverCount + 1 };
     await broadcastQueue.add(name, newData, { attempts: job.opts?.attempts || 3, backoff: job.opts?.backoff || { type: 'exponential', delay: 5000 } });
     console.log(`[broadcastWorker] Re-queued failed job ${jobId} as new attempt (recoverCount=${recoverCount + 1}).`);
@@ -66,7 +69,7 @@ const worker = new Worker(
   queueName,
   async (job) => {
     if (job.name === 'transfer') {
-      const { pendingId, uid_tag_id, currentTxid, newOwnerAddress, record } = job.data;
+      const { pendingId, uid_tag_id, currentTxid, newOwnerAddress, record, posIntentId } = job.data;
       const opReturnData = [Buffer.from(JSON.stringify(record))];
       const res = await BlockchainService.constructAndBroadcastTransferTx(
         currentTxid,
@@ -77,8 +80,11 @@ const worker = new Worker(
       if (!res.success) {
         if (pendingId) {
           try { await dbService.markTransferFailed(pendingId, res.error || 'broadcast failed'); }
-          // eslint-disable-next-line no-empty
-          catch (_) {}
+          catch (e) { console.error('[broadcastWorker] markTransferFailed error:', e); }
+        }
+        if (posIntentId) {
+          try { await ClaimIntent.findByIdAndUpdate(posIntentId, { $set: { status: 'failed', error: res.error || 'broadcast failed' } }).exec(); }
+          catch (e) { console.error('[broadcastWorker] update ClaimIntent failed-state error:', e); }
         }
         throw new Error(`Broadcast failed: ${res.error}`);
       }
@@ -90,6 +96,10 @@ const worker = new Worker(
         // Should not happen in new flow; no legacy path since transfer previously used updateOwnership directly in controller
         // Best-effort: do nothing extra
       }
+      if (posIntentId) {
+        try { await ClaimIntent.findByIdAndUpdate(posIntentId, { $set: { status: 'confirmed', txid: newTxid } }).exec(); }
+        catch (e) { console.error('[broadcastWorker] update ClaimIntent confirmed-state error:', e); }
+      }
       return { txid: newTxid };
     }
 
@@ -100,8 +110,7 @@ const worker = new Worker(
     if (!res.success) {
       if (pendingId) {
         try { await dbService.markRegistrationFailed(pendingId, res.error || 'broadcast failed'); }
-        // eslint-disable-next-line no-empty
-        catch (_) {}
+        catch (e) { console.error('[broadcastWorker] markRegistrationFailed error:', e); }
       }
       throw new Error(`Broadcast failed: ${res.error}`);
     }

@@ -294,6 +294,8 @@ async function startServer() {
       validateRequest(unlockContentSchema),
       patchController.unlockContent,
     );
+    // POS claim flow routes
+    app.use('/v1', require('./routes/pos'));
     const privacyController = require('./controllers/privacyController');
     app.get('/v1/privacy/export', jwtAuthSvd, privacyController.exportData);
     app.delete('/v1/privacy/delete', jwtAuthSvd, privacyController.deleteMe);
@@ -420,10 +422,10 @@ async function startServer() {
         logger.info('Shutting down gracefully...');
         // Stop accepting new connections; finish in-flight, then cleanup and exit.
         server.close(async () => {
-          try { await jobService.close(); } catch (_) {}
-          try { await svdReplayCacheRedis.close(); } catch (_) {}
-          try { await svdChallengeCacheRedis.close(); } catch (_) {}
-          try { await closeDb(); } catch (_) {}
+          try { await jobService.close(); } catch (err) { logger.warn('jobService.close() failed during shutdown', { error: err && err.message }); }
+          try { await svdReplayCacheRedis.close(); } catch (err) { logger.warn('svdReplayCacheRedis.close() failed during shutdown', { error: err && err.message }); }
+          try { await svdChallengeCacheRedis.close(); } catch (err) { logger.warn('svdChallengeCacheRedis.close() failed during shutdown', { error: err && err.message }); }
+          try { await closeDb(); } catch (err) { logger.warn('closeDb() failed during shutdown', { error: err && err.message }); }
           logger.info('Server closed.');
           process.exit(0);
         });

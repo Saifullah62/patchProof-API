@@ -137,6 +137,65 @@ components:
           type: string
         # ... other fields
 
+    # --- POS Claim Flow Schemas ---
+    PosClaimIntentBody:
+      type: object
+      properties:
+        uid:
+          type: string
+          description: 'UID from NFC tag or identifier'
+        customer:
+          type: object
+          properties:
+            address:
+              type: string
+              description: 'Customer BSV address derived from pubKey'
+            userId:
+              type: string
+              description: 'Customer user id'
+            pubKey:
+              type: string
+              description: 'Compressed secp256k1 public key hex (66 chars)'
+          required: [address, userId, pubKey]
+        challenge:
+          type: object
+          properties:
+            ts:
+              type: integer
+              description: 'Unix ms timestamp used in canonical message'
+            nonce:
+              type: string
+              description: 'Short-lived random nonce'
+          required: [ts, nonce]
+        signature:
+          type: string
+          description: 'DER-encoded signature hex over canonical string'
+      required: [uid, customer, challenge, signature]
+
+    PosClaimApprovalBody:
+      type: object
+      properties:
+        intentId:
+          type: string
+        approvedBy:
+          type: string
+      required: [intentId, approvedBy]
+
+    PosClaimStatus:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, confirmed, failed, expired]
+        txid:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
   responses:
     Unauthorized:
       description: Unauthorized. The API key is missing or invalid, or the JWT is missing/expired.
@@ -391,3 +450,82 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           description: The patch state has changed since the request was initiated (Optimistic Lock Failure).
+
+  # --- POS Claim Flow ---
+  /v1/pos/claim-intent:
+    post:
+      summary: Create claim intent
+      description: Customer submits a signed claim intent proving possession of the key that will own the item.
+      tags: [POS]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PosClaimIntentBody'
+      responses:
+        '201':
+          description: Intent created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [pending, approved, confirmed, failed, expired] }
+        '400':
+          description: Validation or signature error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/pos/claim-approve:
+    post:
+      summary: Approve claim intent (POS/cashier)
+      description: POS approves a pending claim; server enqueues transfer to the customer address.
+      tags: [POS]
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PosClaimApprovalBody'
+      responses:
+        '200':
+          description: Approved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string, enum: [approved] }
+                  pendingId: { type: string }
+                  jobId: { type: string }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Intent is not pending or expired
+
+  /v1/pos/claim-status/{id}:
+    get:
+      summary: Get claim status
+      description: Lookup a claim intent status by id
+      tags: [POS]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Status body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PosClaimStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'

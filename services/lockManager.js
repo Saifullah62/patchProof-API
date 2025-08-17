@@ -46,8 +46,7 @@ class LockManager {
     let timer = null;
     const beat = async () => {
       try { await this.extendLock(lockName, token, ttlMs); }
-      // eslint-disable-next-line no-empty
-      catch (_) {}
+      catch (e) { /* benign: best-effort heartbeat extension */ }
     };
     try {
       timer = setInterval(beat, intervalMs);
@@ -58,8 +57,7 @@ class LockManager {
     } finally {
       if (timer) clearInterval(timer);
       try { await this.releaseLock(lockName, token); }
-      // eslint-disable-next-line no-empty
-      catch (_) {}
+      catch (e) { /* benign: lock already released or lost */ }
     }
   }
   /**
@@ -169,8 +167,7 @@ class LockManager {
       return { ok: false, error: e };
     } finally {
       try { await this.releaseLock(lockName, token); }
-      // eslint-disable-next-line no-empty
-      catch (_) {}
+      catch (e) { /* benign: lock already released or lost */ }
     }
   }
 }

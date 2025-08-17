@@ -96,8 +96,7 @@ class SvdService {
     await challengeCache.set(userId, Mhex, this.CHALLENGE_TTL_SEC);
     const svd = await SvdRegistry.findOne({ userId: new mongoose.Types.ObjectId(userId) });
     try { metrics.inc('begin', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
-    // eslint-disable-next-line no-empty
-    catch (_) {}
+    catch (e) { console.warn('[SvdService] metrics begin inc failed:', e?.message || e); }
     return { M: Mhex, pmcHex: svd?.pmcHex || null };
   }
 
@@ -111,13 +110,11 @@ class SvdService {
     const mDigestHex = sha256Hex(Mbuf);
     const firstSeen = await replayCacheRedis.addIfNotExists(mDigestHex);
     if (!firstSeen) { try { metrics.inc('replayed', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
-    // eslint-disable-next-line no-empty
-    catch (_) {} throw new SvdReplayError(); }
+    catch (e) { console.warn('[SvdService] metrics replayed inc failed:', e?.message || e); } throw new SvdReplayError(); }
 
     const issuedM = await challengeCache.get(userId);
     if (!issuedM) { try { metrics.inc('expired', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
-    // eslint-disable-next-line no-empty
-    catch (_) {} throw new SvdExpiredError('No active challenge'); }
+    catch (e) { console.warn('[SvdService] metrics expired inc failed:', e?.message || e); } throw new SvdExpiredError('No active challenge'); }
     if (issuedM !== Mhex) throw new SvdBadChallengeError('Challenge mismatch');
 
     const V2C = deriveV2FromPMC(reg.pmcHex, Mbuf);
@@ -125,12 +122,10 @@ class SvdService {
     const msgHash = sha256(Mbuf);
     const n = bsv.crypto.Point.getN();
     if (sig.s.gt(n.shrn(1))) { try { metrics.inc('malleable_reject', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
-    // eslint-disable-next-line no-empty
-    catch (_) {} throw new SvdInvalidSignatureError('Non-canonical signature'); }
+    catch (e) { console.warn('[SvdService] metrics malleable_reject inc failed:', e?.message || e); } throw new SvdInvalidSignatureError('Non-canonical signature'); }
     const ok = bsv.crypto.ECDSA.verify(msgHash, sig, V2C);
     if (!ok) { try { metrics.inc('invalid', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
-    // eslint-disable-next-line no-empty
-    catch (_) {} throw new SvdInvalidSignatureError('SVD signature invalid'); }
+    catch (e) { console.warn('[SvdService] metrics invalid inc failed:', e?.message || e); } throw new SvdInvalidSignatureError('SVD signature invalid'); }
 
     let S;
     if (this.useKmsForSvd) {
@@ -149,17 +144,13 @@ class SvdService {
     const token = this._issueJwtForUser(userId, S, { mDigestHex, kid: this.ACTIVE_KID || 'unknown' });
     // Single-use: invalidate the challenge immediately upon success
     try { await challengeCache.del(userId); }
-    // eslint-disable-next-line no-empty
-    catch (_) {}
+    catch (e) { console.warn('[SvdService] challengeCache.del failed:', e?.message || e); }
     try { metrics.inc('complete', { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA }); }
-    // eslint-disable-next-line no-empty
-    catch (_) {}
+    catch (e) { console.warn('[SvdService] metrics complete inc failed:', e?.message || e); }
     try { logger.info({ message: 'svd complete', tags: { kid: this.ACTIVE_KID || 'unknown', sha: DEPLOY_SHA } }); }
-    // eslint-disable-next-line no-empty
-    catch (_) {}
+    catch (e) { console.warn('[SvdService] logger info failed:', e?.message || e); }
     try { msgHash.fill(0); }
-    // eslint-disable-next-line no-empty
-    catch (_) {}
+    catch (e) { /* noop best-effort zero */ }
     return { token };
   }
 
