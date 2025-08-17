@@ -7,31 +7,31 @@ const { createClient } = require('redis');
 const logger = require('../logger');
 
 // --- Centralized Redis Client ---
-// It's crucial that all rate limiters share the same client and connection.
+// Single Redis v4 client; each limiter will get its own RedisStore with a unique prefix.
 let redisClient;
-let store = null;
 try {
   const redisUrl = process.env.REDIS_URL || process.env.REDIS_ENDPOINT || 'redis://localhost:6379';
   redisClient = createClient({ url: redisUrl });
   if (!redisClient.isOpen) {
     // Connect lazily; avoid blocking startup if Redis is down.
-    redisClient.connect().then(() => {
-      logger.info('[auth-rate-limit] Connected Redis client');
-    }).catch((e) => {
-      logger.error('[auth-rate-limit] Failed to connect Redis client for auth limiters.', e);
-    });
+    redisClient.connect()
+      .then(() => {
+        logger.info('[auth-rate-limit] Connected Redis client');
+      })
+      .catch((e) => {
+        logger.error('[auth-rate-limit] Failed to connect Redis client for auth limiters.', e);
+      });
   }
-  store = new RedisStore({
-    // node-redis v4: provide a sendCommand delegate
-    sendCommand: (...args) => redisClient.sendCommand(args),
-  });
 } catch (e) {
-  logger.error('[auth-rate-limit] Could not create Redis client. Falling back to in-memory store (NOT safe for production).', e);
+  logger.error('[auth-rate-limit] Could not create Redis client. Falling back to in-memory limiters (NOT safe for production).', e);
 }
 
-if (!store) {
-  logger.warn('[auth-rate-limit] Redis store is not available. Using in-memory store. This will not protect across multiple instances.');
-}
+// Helper: fresh RedisStore per limiter with a unique prefix
+const makeStore = (prefix) => new RedisStore({
+  // node-redis v4: provide a sendCommand delegate
+  sendCommand: (...args) => redisClient.sendCommand(args),
+  prefix,
+});
 
 // --- Shared Configuration & Handlers ---
 
@@ -71,7 +71,7 @@ const getNormalizedKey = (req) => {
 
 // Limits how often a code can be requested for a single identifier.
 const requestVerificationLimiter = rateLimit({
-  store,
+  store: makeStore('rl:auth-request:'),
   windowMs: parseInt(process.env.AUTH_REQUEST_WINDOW_MS, 10) || 60 * 1000, // default 1 minute
   max: parseInt(process.env.AUTH_REQUEST_MAX, 10) || 1,
   message: 'Too many verification requests. Please wait a minute before trying again.',
@@ -83,7 +83,7 @@ const requestVerificationLimiter = rateLimit({
 
 // Limits how many FAILED attempts can be made to submit a code.
 const submitVerificationLimiter = rateLimit({
-  store,
+  store: makeStore('rl:auth-submit:'),
   windowMs: parseInt(process.env.AUTH_SUBMIT_WINDOW_MS, 10) || 10 * 60 * 1000, // default 10 minutes
   max: parseInt(process.env.AUTH_SUBMIT_MAX, 10) || 5,
   message: 'Too many failed verification attempts. Your account is temporarily locked. Please try again later.',
@@ -103,7 +103,7 @@ module.exports = {
   submitVerificationLimiter,
   // SVD: begin/complete authentication limiters
   svdBeginLimiter: rateLimit({
-    store,
+    store: makeStore('rl:svd-begin:'),
     windowMs: parseInt(process.env.SVD_BEGIN_WINDOW_MS, 10) || 60 * 1000,
     max: parseInt(process.env.SVD_BEGIN_MAX, 10) || 20,
     message: 'Too many SVD begin requests. Please slow down.',
@@ -114,7 +114,7 @@ module.exports = {
   }),
   // General-purpose public API limiter
   publicApiLimiter: rateLimit({
-    store,
+    store: makeStore('rl:public:'),
     windowMs: parseInt(process.env.PUBLIC_API_WINDOW_MS, 10) || 60 * 1000,
     max: parseInt(process.env.PUBLIC_API_MAX, 10) || 60,
     message: 'Too many requests. Please slow down.',
@@ -124,7 +124,7 @@ module.exports = {
     legacyHeaders: false,
   }),
   svdCompleteLimiter: rateLimit({
-    store,
+    store: makeStore('rl:svd-complete:'),
     windowMs: parseInt(process.env.SVD_COMPLETE_WINDOW_MS, 10) || 60 * 1000,
     max: parseInt(process.env.SVD_COMPLETE_MAX, 10) || 30,
     message: 'Too many SVD complete requests. Please slow down.',
@@ -135,7 +135,7 @@ module.exports = {
   }),
   // Admin canary limiter (use IP-based key)
   svdCanaryLimiter: rateLimit({
-    store,
+    store: makeStore('rl:svd-canary:'),
     windowMs: parseInt(process.env.SVD_CANARY_WINDOW_MS, 10) || 60 * 1000,
     max: parseInt(process.env.SVD_CANARY_MAX, 10) || 30,
     message: 'Too many requests to canary endpoint. Please slow down.',
