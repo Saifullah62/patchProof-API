@@ -416,24 +416,22 @@ async function startServer() {
       const server = app.listen(PORT, HOST, () => {
         logger.info(`PatchProof API started on ${HOST}:${PORT}`);
       });
-      const gracefulShutdown = async () => {
+      const shutdown = () => {
         logger.info('Shutting down gracefully...');
+        // Stop accepting new connections; finish in-flight, then cleanup and exit.
         server.close(async () => {
-          try { await jobService.close(); }
-          // eslint-disable-next-line no-empty
-          catch (_) {}
-          try { await svdReplayCacheRedis.close(); }
-          // eslint-disable-next-line no-empty
-          catch (_) {}
-          try { await svdChallengeCacheRedis.close(); }
-          // eslint-disable-next-line no-empty
-          catch (_) {}
-          await closeDb();
+          try { await jobService.close(); } catch (_) {}
+          try { await svdReplayCacheRedis.close(); } catch (_) {}
+          try { await svdChallengeCacheRedis.close(); } catch (_) {}
+          try { await closeDb(); } catch (_) {}
           logger.info('Server closed.');
+          process.exit(0);
         });
+        // Fallback: force-exit if something hangs
+        setTimeout(() => process.exit(1), 10_000);
       };
-      process.on('SIGTERM', gracefulShutdown);
-      process.on('SIGINT', gracefulShutdown);
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
     }
 
     return app;

@@ -29,7 +29,7 @@ const PatchStateSchema = new mongoose.Schema(
 
 // Indexes to speed up lookups and recent activity queries
 // Unique on uid_tag_id is created automatically by the schema
-PatchStateSchema.index({ current_owner_address: 1 });
+// current_owner_address already has a path-level index: true
 PatchStateSchema.index({ updated_at: -1 });
 
 module.exports = mongoose.model('PatchState', PatchStateSchema);
