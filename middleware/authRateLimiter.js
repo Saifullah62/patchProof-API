@@ -122,6 +122,8 @@ module.exports = {
     handler: rateLimitExceededHandler,
     standardHeaders: true,
     legacyHeaders: false,
+    // Never rate limit basic health endpoints
+    skip: (req) => req.path === '/ready' || req.path === '/health' || req.path === '/__ping',
   }),
   svdCompleteLimiter: rateLimit({
     store: makeStore('rl:svd-complete:'),

@@ -181,6 +181,11 @@ async function startServer() {
 
     const app = express();
 
+    // --- Early health endpoints (bypass heavy middleware) ---
+    app.get('/__ping', (req, res) => res.type('text/plain').send('pong'));
+    app.get('/health', (req, res) => res.json({ status: 'ok' }));
+    app.get('/ready',  (req, res) => res.json({ ready: true }));
+
     // --- Security and Core Middleware ---
     app.set('trust proxy', 1); // Trust first proxy if behind a reverse proxy/CDN
     app.use(helmet());
@@ -344,8 +349,6 @@ async function startServer() {
     app.get('/v1/admin/utxo-health', apiKeyMiddleware, adminController.getUtxoHealth);
     app.post('/v1/admin/utxo-maintain', apiKeyMiddleware, adminController.triggerMaintenance);
     app.post('/v1/admin/batch-anchor', apiKeyMiddleware, adminController.batchAnchor);
-    // Liveness
-    app.get('/health', (req, res) => res.json({ status: 'ok' }));
     // Metrics text renderer
     const metricsHandler = async (req, res) => {
       try {
@@ -361,20 +364,7 @@ async function startServer() {
     } else {
       app.get('/metrics', metricsHandler);
     }
-    app.get('/ready', (req, res) => {
-      const isDbConnected = mongoose.connection.readyState === 1;
-      const payload = {
-        status: isDbConnected ? 'ready' : 'not_ready',
-        nodeEnv: process.env.NODE_ENV || 'development',
-        database: isDbConnected ? 'connected' : 'disconnected',
-        services: { ...readyFlags },
-      };
-      if (isDbConnected) {
-        res.json(payload);
-      } else {
-        res.status(503).json(payload);
-      }
-    });
+    // readiness is handled by early lightweight endpoint
 
     // 404 handler
     app.use((req, res) => res.status(404).json({ error: { message: 'Not Found' } }));
