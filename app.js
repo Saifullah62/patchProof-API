@@ -16,8 +16,6 @@ const helmet = require('helmet');
 const cors = require('cors');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const { RedisStore } = require('rate-limit-redis'); // rate-limit-redis store
-const { createClient } = require('redis'); // node-redis v4 client for limiter
 const mongoose = require('mongoose');
 const path = require('path');
 
@@ -47,6 +45,15 @@ const metrics = require('./services/metricsService');
 const requestIdMiddleware = require('./requestId');
 const apiKeyMiddleware = require('./apiKeyMiddleware');
 const jwtAuthSvd = require('./middleware/jwtAuthSvd');
+// Centralized rate limiters
+const {
+  requestVerificationLimiter,
+  submitVerificationLimiter,
+  publicApiLimiter,
+  svdBeginLimiter,
+  svdCompleteLimiter,
+  svdCanaryLimiter,
+} = require('./middleware/authRateLimiter');
 
 async function startServer() {
   try {
@@ -178,35 +185,8 @@ async function startServer() {
     app.set('trust proxy', 1); // Trust first proxy if behind a reverse proxy/CDN
     app.use(helmet());
 
-    // API-key-based rate limiting with optional Redis store
-    /**
-     * Keying strategy:
-     *  - Prefer x-api-key when present to avoid one abusive client impacting others
-     *  - Fallback to IP for unauthenticated or missing key traffic
-     */
-    const keyGenerator = (req) => req.header('x-api-key') || req.ip;
-    const limiterOptions = {
-      windowMs: 15 * 60 * 1000,
-      max: process.env.NODE_ENV === 'test' ? 1000 : 100,
-      standardHeaders: true,
-      legacyHeaders: false,
-      keyGenerator,
-    };
-    const redisUrl = process.env.REDIS_URL || process.env.REDIS_ENDPOINT || 'redis://localhost:6379';
-    const redisPassword = process.env.REDIS_PASSWORD || undefined;
-    try {
-      const redisClient = createClient({ url: redisUrl, password: redisPassword });
-      await redisClient.connect();
-      logger.info('[rate-limit] Connected to Redis');
-      limiterOptions.store = new RedisStore({
-        // node-redis v4 requires passing a sendCommand function
-        sendCommand: (...args) => redisClient.sendCommand(args),
-      });
-    } catch (e) {
-      logger.warn(`[rate-limit] Redis unavailable at ${redisUrl}, falling back to in-memory store`);
-    }
-    const limiter = rateLimit(limiterOptions);
-    app.use(limiter);
+    // Apply shared public API limiter to /api namespace
+    app.use('/api', publicApiLimiter);
 
     const allowedOrigins = (getSecret('CORS_ALLOWED_ORIGINS') || '').split(',').filter(Boolean);
     app.use(cors({
@@ -276,7 +256,7 @@ async function startServer() {
     };
     // Authentication routes with strict, endpoint-specific rate limits and validation
     const validateRequest = require('./middleware/validateRequest');
-    const { requestVerificationLimiter, submitVerificationLimiter } = require('./middleware/authRateLimiter');
+    // requestVerificationLimiter and submitVerificationLimiter already imported above
     const { requestVerificationSchema, submitVerificationSchema, registerPatchSchema, txidParamSchema, uidParamSchema, transferOwnershipSchema, unlockContentSchema } = require('./middleware/validators');
     app.post(
       '/v1/auth/request-verification',
