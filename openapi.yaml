@@ -12,7 +12,7 @@ info:
     url: http://www.apache.org/licenses/LICENSE-2.0.html
 
 servers:
-  - url: https://api.patchproof.com
+  - url: https://api.proofpatch.com
     description: Production Server
   - url: http://localhost:3001
     description: Local Development Server
@@ -32,29 +32,42 @@ components:
       description: A JSON Web Token (JWT) for authenticating end-users.
 
   schemas:
-    # --- Request Bodies ---
-    RequestVerificationBody:
+    # --- Request Bodies (SVD) ---
+    SvdRegisterBody:
       type: object
       properties:
-        identifier:
+        userId:
           type: string
-          format: email
-          description: The user's email address to send the verification code to.
-          example: 'user@example.com'
-      required: [identifier]
+          example: 'user-123'
+        pmcHex:
+          type: string
+          description: Compressed public master key in hex.
+          example: '02abcd...ef'
+      required: [userId, pmcHex]
 
-    SubmitVerificationBody:
+    SvdBeginBody:
       type: object
       properties:
-        identifier:
+        userId:
           type: string
-          format: email
-          example: 'user@example.com'
-        code:
+          example: 'user-123'
+      required: [userId]
+
+    SvdCompleteBody:
+      type: object
+      properties:
+        userId:
           type: string
-          description: The 6-digit verification code sent to the user.
-          example: '123456'
-      required: [identifier, code]
+          example: 'user-123'
+        M:
+          type: string
+          description: The server-provided challenge from /api/svd/begin.
+          example: 'abcdef...'
+        signatureHex:
+          type: string
+          description: Signature over M.
+          example: 'deadbeef...'
+      required: [userId, M, signatureHex]
 
     RegisterPatchBody:
       type: object
@@ -143,6 +156,21 @@ components:
 
 # API Paths
 paths:
+  /__ping:
+    get:
+      summary: Ping
+      description: Lightweight liveness check.
+      tags: [Health]
+      responses:
+        '200':
+          description: Service is reachable.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pong: { type: boolean, example: true }
+                  ts: { type: string, example: '2025-01-01T00:00:00.000Z' }
   /health:
     get:
       summary: Health Check
@@ -158,48 +186,118 @@ paths:
                 properties:
                   status: { type: string, example: 'ok' }
 
-  /v1/auth/request-verification:
-    post:
-      summary: Request a Verification Code
-      description: Initiates the login process by sending a time-limited, single-use code to the user's identifier (email).
-      tags: [Authentication]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RequestVerificationBody'
+  /ready:
+    get:
+      summary: Readiness Check
+      description: Indicates whether all dependencies are ready (DB, Redis, etc.).
+      tags: [Health]
       responses:
         '200':
-          description: Verification code has been sent successfully.
-        '429':
-          description: Too many requests. The user has requested a code too recently.
+          description: Service is ready to accept traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready: { type: boolean, example: true }
 
-  /v1/auth/submit-verification:
+  /api/svd/kid:
+    get:
+      summary: Get active SVD KID
+      description: Returns the active SVD key identifier clients should use.
+      tags: [Authentication]
+      responses:
+        '200':
+          description: The current KID.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kid: { type: string, example: 'svd-kms' }
+
+  /api/svd/register:
     post:
-      summary: Submit a Verification Code
-      description: Submits the 6-digit code to complete the login process and receive a JWT.
+      summary: Register PMC
+      description: Registers the user's public master key (PMC).
       tags: [Authentication]
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SubmitVerificationBody'
+              $ref: '#/components/schemas/SvdRegisterBody'
       responses:
-        '200':
-          description: Verification successful. Returns a JWT.
+        '201':
+          description: PMC registered successfully.
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   success: { type: boolean, example: true }
-                  token: { type: string, format: jwt }
+                  message: { type: string, example: 'PMC registered successfully.' }
+
+  /api/svd/begin:
+    post:
+      summary: Begin SVD
+      description: Initializes an SVD session and returns a challenge M.
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SvdBeginBody'
+      responses:
+        '200':
+          description: Challenge generated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  M: { type: string, example: 'abcdef...' }
+                  pmcHex: { type: string, example: '02abcd...ef' }
+
+  /api/svd/complete:
+    post:
+      summary: Complete SVD
+      description: Submits the signature over M; returns a JWT upon success.
+      tags: [Authentication]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SvdCompleteBody'
+      responses:
+        '200':
+          description: Verification successful.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string, description: 'JWT' }
+        '400':
+          description: Bad challenge or missing PMC.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          description: Too many failed attempts.
+          description: Invalid signature.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Replay detected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /v1/patches:
     post:
@@ -278,12 +376,3 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           description: The patch state has changed since the request was initiated (Optimistic Lock Failure).
-
-# Tag grouping for the UI
-tags:
-  - name: Health
-    description: API health and readiness checks.
-  - name: Authentication
-    description: End-user authentication flow.
-  - name: Patches
-    description: Core operations for managing digital assets.
