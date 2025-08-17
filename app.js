@@ -412,8 +412,9 @@ async function startServer() {
 
     if (require.main === module) {
       const PORT = process.env.PORT || 3001;
-      const server = app.listen(PORT, () => {
-        logger.info(`PatchProof API started on port ${PORT}`);
+      const HOST = process.env.BIND || '127.0.0.1';
+      const server = app.listen(PORT, HOST, () => {
+        logger.info(`PatchProof API started on ${HOST}:${PORT}`);
       });
       const gracefulShutdown = async () => {
         logger.info('Shutting down gracefully...');
