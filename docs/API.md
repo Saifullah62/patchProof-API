@@ -2,7 +2,8 @@
 
 This document lists the primary HTTP endpoints and their behaviors.
 
-Base URL: http://localhost:3001
+Base URL: https://api.proofpatch.com
+Local Dev: http://localhost:3001
 All JSON responses set Cache-Control appropriately. Sensitive routes may use no-store.
 
 ## Authentication
@@ -48,28 +49,44 @@ POST /v1/admin/utxo-maintenance
 - Body example: { action: "sync" | "sweep" | "split" }
 
 ## SVD (Passwordless)
+POST /api/svd/register
+- Purpose: Register the user's public master key (PMC).
+- Validation: body `{ userId: <24-hex>, pmcHex: <66-hex compressed secp256k1 pubkey> }`
+- Details:
+  - `userId`: 24 hexadecimal characters (MongoDB ObjectId-like)
+  - `pmcHex`: 66 hexadecimal characters, compressed secp256k1 public key, must start with `02` or `03` and be on-curve
+- Errors: 400 (validation), 409 (already registered)
+- Example request:
+  ```json
+  {
+    "userId": "507f1f77bcf86cd799439011",
+    "pmcHex": "02a34b5c6d7e8899aabbccddeeff00112233445566778899aabbccddeeff001122"
+  }
+  ```
+
 POST /api/svd/begin
 - Purpose: Issue short-lived challenge M for passwordless auth.
-- Validation: body `{ userId: <24-hex> }`
+- Validation: body `{ userId: <24-hex> }` (MongoDB ObjectId-like)
 - Rate limited per-user; response avoids exposing sensitive material.
 - Example request:
   ```json
-  { "userId": "64b7f5e6ab9f2ea0c2d1f1aa" }
+  { "userId": "507f1f77bcf86cd799439011" }
   ```
 - Example response:
   ```json
-  { "M": "<48-hex>", "pmcHex": "<66-hex>" }
+  { "M": "<48-hex>", "pmcHex": "<66-hex compressed secp256k1 pubkey>" }
   ```
 
 POST /api/svd/complete
 - Purpose: Verify proof, enforce low-S signatures, issue JWT bound to challenge.
-- Validation: body `{ userId: <24-hex>, M: <48-hex>, signatureHex: <DER hex> }`
+- Validation: body `{ userId: <24-hex>, M: <48-hex>, signatureHex: <DER-encoded signature hex> }`
+- Rate limited per-user; response avoids exposing sensitive material.
 - Errors: see Error Codes below; also rate limit exceeded (429).
 - Example request:
   ```json
   {
-    "userId": "64b7f5e6ab9f2ea0c2d1f1aa",
-    "M": "...",
+    "userId": "507f1f77bcf86cd799439011",
+    "M": "aabbccddeeff00112233445566778899aabbccddeeff0011",
     "signatureHex": "3045..."
   }
   ```
@@ -80,7 +97,7 @@ POST /api/svd/complete
 
 GET /api/svd/kid
 - Purpose: Return active key id for client-side binding.
-- Headers: Cache-Control: no-store.
+- Headers: Cache-Control: public, max-age=300 (response may be cached up to 5 minutes).
 
 GET /api/svd/canary (admin-gated)
 - Purpose: Health/self-test/metrics (challenge age histogram, counters).
@@ -101,6 +118,8 @@ Error Codes
 - `SVD_INVALID_SIGNATURE` (401)
 - `SVD_BAD_CHALLENGE` (400)
 - `SVD_NO_PMC` (400)
+- Validation errors (e.g., invalid `pmcHex` or `userId`) return 400
+- Duplicate PMC registration returns 409
 
 Notes
 - Rate limiting env vars: `SVD_BEGIN_WINDOW_MS`, `SVD_BEGIN_MAX`, `SVD_COMPLETE_WINDOW_MS`, `SVD_COMPLETE_MAX`.
@@ -125,4 +144,5 @@ Notes
 
 ## Notes
 - JWTs include jti/cnf (sha256(M)), nbf, iat; signed with current kid.
-- Registration signatures use hardened deterministic hashing (safe-stable-stringify) and DER hex output.
+- Registration requires a valid compressed secp256k1 public key for `pmcHex` (66-hex, 02/03 prefix, on-curve).
+- Signatures are DER-encoded hex.

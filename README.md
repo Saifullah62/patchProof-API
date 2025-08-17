@@ -358,39 +358,54 @@ $body = @'
 
 Invoke-RestMethod -Method POST `
   -Uri 'http://localhost:3001/v1/patches' `
-  -ContentType 'application/json' `
-  -Headers @{ 'x-api-key' = $env:API_KEY } `
-  -Body $body
+```sh
+# 1) Discover active KID (cacheable up to 300s)
+curl -s https://api.proofpatch.com/api/svd/kid | jq .
+
+# 2) Register PMC (one-time)
+curl -s -X POST https://api.proofpatch.com/api/svd/register \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "userId": "507f1f77bcf86cd799439011",
+    "pmcHex": "02a34b5c6d7e8899aabbccddeeff00112233445566778899aabbccddeeff001122"
+  }'
+
+# 3) Begin SVD (get challenge M)
+M_JSON=$(curl -s -X POST https://api.proofpatch.com/api/svd/begin \
+  -H 'Content-Type: application/json' \
+  -d '{"userId":"507f1f77bcf86cd799439011"}')
+echo "$M_JSON" | jq .
+
+# 4) Sign M with your key (client-side). Submit to complete:
+curl -s -X POST https://api.proofpatch.com/api/svd/complete \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "userId": "507f1f77bcf86cd799439011",
+    "M": "<48-hex-from-begin>",
+    "signatureHex": "<DER-hex-signature-over-M>"
+  }'
 ```
 
-## JWT Authentication
+Local examples (dev): replace host with `http://localhost:3001`.
 
-Certain sensitive routes additionally require a valid Bearer JWT in the `Authorization` header.
-
-- How to obtain a JWT:
-  1) POST `/v1/auth/request-verification` with `{ identifier: "you@example.com" }`.
-  2) Retrieve the code from email (or logs in dev), then POST `/v1/auth/submit-verification` with `{ identifier, code }`.
-  3) The response contains `token`.
-
-- Use the token in requests:
+Using the JWT:
 
 ```sh
 curl -X POST \
-  http://localhost:3001/v1/patches/txid123.../transfer-ownership \
+  https://api.proofpatch.com/v1/patches/txid123.../transfer-ownership \
   -H 'Content-Type: application/json' \
   -H 'x-api-key: YOUR_API_KEY' \
   -H 'Authorization: Bearer YOUR_JWT' \
   -d '{
     "newOwnerAddress": "1ABC...",
-    "currentOwnerPubKey": "02abcdef...", 
+    "currentOwnerPubKey": "02abcdef...",
     "currentOwnerSignature": "3045..."
   }'
 ```
 
-Required on:
-- POST `/v1/patches/{txid}/transfer-ownership` (requires BOTH `x-api-key` and `Authorization: Bearer <JWT>`)
-
-JWT is signed with `JWT_SECRET`. In test environment, JWT checks are bypassed.
+Notes:
+- JWTs are bound to the SVD challenge (cnf/jti derived from `M`) and signed with the active KID.
+- In test environment, JWT checks may be relaxed to enable automated tests.
 
 ## Ownership Transfer Authorization (Signature Verification)
 

@@ -19,7 +19,16 @@ router.post(
       await svdService.registerPMC(userId, pmcHex);
       res.status(201).json({ success: true, message: 'PMC registered successfully.' });
     } catch (err) {
-      next(err);
+      // Map duplicate key to 409 Conflict to match OpenAPI/docs
+      // Handles Mongo duplicate key errors such as E11000 on unique userId
+      if (err && (err.code === 11000 || (typeof err.message === 'string' && err.message.includes('E11000')))) {
+        return res.status(409).json({ error: 'DUPLICATE_PMC', message: 'PMC already registered for this user.' });
+      }
+      // Map PMC validation errors (on-curve/compressed checks) to 400
+      if (err && typeof err.message === 'string' && /pmcHex|compressed secp256k1|compressed SEC|invalid/i.test(err.message)) {
+        return res.status(400).json({ error: 'VALIDATION_ERROR', message: err.message });
+      }
+      return next(err);
     }
   }
 );

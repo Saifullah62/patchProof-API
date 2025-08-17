@@ -38,11 +38,12 @@ components:
       properties:
         userId:
           type: string
-          example: 'user-123'
+          description: MongoDB ObjectId-like hex (24 hex chars)
+          example: '507f1f77bcf86cd799439011'
         pmcHex:
           type: string
-          description: Compressed public master key in hex.
-          example: '02abcd...ef'
+          description: Compressed secp256k1 public key in hex (66 hex chars, starts with 02/03, on-curve).
+          example: '02a34b5c6d7e8899aabbccddeeff00112233445566778899aabbccddeeff001122'
       required: [userId, pmcHex]
 
     SvdBeginBody:
@@ -50,7 +51,8 @@ components:
       properties:
         userId:
           type: string
-          example: 'user-123'
+          description: MongoDB ObjectId-like hex (24 hex chars)
+          example: '507f1f77bcf86cd799439011'
       required: [userId]
 
     SvdCompleteBody:
@@ -58,15 +60,16 @@ components:
       properties:
         userId:
           type: string
-          example: 'user-123'
+          description: MongoDB ObjectId-like hex (24 hex chars)
+          example: '507f1f77bcf86cd799439011'
         M:
           type: string
           description: The server-provided challenge from /api/svd/begin.
-          example: 'abcdef...'
+          example: 'aabbccddeeff00112233445566778899aabbccddeeff0011'
         signatureHex:
           type: string
-          description: Signature over M.
-          example: 'deadbeef...'
+          description: DER-encoded ECDSA signature over M (hex encoded).
+          example: '3045022100a1b2c3...'
       required: [userId, M, signatureHex]
 
     RegisterPatchBody:
@@ -204,7 +207,7 @@ paths:
   /api/svd/kid:
     get:
       summary: Get active SVD KID
-      description: Returns the active SVD key identifier clients should use.
+      description: Returns the active SVD key identifier clients should use. Response is cacheable for up to 300 seconds.
       tags: [Authentication]
       responses:
         '200':
@@ -237,6 +240,18 @@ paths:
                 properties:
                   success: { type: boolean, example: true }
                   message: { type: string, example: 'PMC registered successfully.' }
+        '400':
+          description: Validation error (e.g., invalid userId or pmcHex).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: PMC already registered for this user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/svd/begin:
     post:
